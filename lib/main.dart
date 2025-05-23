@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,47 +16,138 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'VideoTV',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const VideoListScreen(),
+      home: const MyHomePage(),
     );
   }
 }
 
-class VideoListScreen extends StatelessWidget {
-  const VideoListScreen({super.key});
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
 
-  final List<Map<String, String>> videos = const [
-    {
-      'title': 'Butterfly',
-      'url':
-          'https://flutter.github.io/assets-for-api-docs/assets/videos/butterfly.mp4'
-    },
-    {
-      'title': 'Bee',
-      'url':
-          'https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4'
-    },
-  ];
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  late final WebViewController _webViewController;
+  List<Map<String, dynamic>> _items = [];
+  bool _loadingDetail = false;
+
+  @override
+  void initState() {
+    super.initState();
+    initWebView();
+  }
+
+  void initWebView() {
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (url) async {
+            await Future.delayed(const Duration(seconds: 3));
+            if (_loadingDetail) {
+              final detailResult =
+                  await _webViewController.runJavaScriptReturningResult(r'''
+  (async function() {
+    const scripts = Array.from(document.scripts);
+    let m3u8 = null;
+    for (let script of scripts) {
+      const text = script.innerText;
+      if (text.includes('.m3u8')) {
+        const match = text.match(/(https?:\\/\\/[^\"'\s]+\\.m3u8)/);
+        if (match) {
+          m3u8 = match[1];
+          break;
+        }
+      }
+    }
+    return JSON.stringify({ m3u8_url: m3u8 });
+  })();
+''');
+
+              final map = jsonDecode(detailResult as String) as Map<String, dynamic>;
+              final url = map['m3u8_url'] as String?;
+              _loadingDetail = false;
+
+              if (url != null && mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VideoPlayerScreen(url: url),
+                  ),
+                );
+              }
+
+              await _webViewController.loadRequest(
+                Uri.parse('https://jable.tv/categories/chinese-subtitle/'),
+              );
+            } else {
+              final result =
+                  await _webViewController.runJavaScriptReturningResult(r'''
+  (function() {
+    const items = Array.from(document.querySelectorAll('.video-img-box')).slice(0, 25);
+    return JSON.stringify(items.map(item => {
+      const img = item.querySelector('img')?.getAttribute('data-src') || item.querySelector('img')?.getAttribute('src');
+      const title = item.querySelector('.detail .title a')?.innerText.trim();
+      const detailUrl = item.querySelector('.detail .title a')?.href;
+      return { title: title, img_url: img, detail_url: detailUrl };
+    }));
+  })();
+''');
+              setState(() {
+                _items = List<Map<String, dynamic>>.from(
+                  jsonDecode(result as String) as List<dynamic>,
+                );
+              });
+            }
+          },
+        ),
+      )
+      ..loadRequest(
+        Uri.parse('https://jable.tv/categories/chinese-subtitle/'),
+      );
+  }
+
+  Widget buildInvisibleWebView() {
+    return SizedBox(
+      width: 1,
+      height: 1,
+      child: WebViewWidget(controller: _webViewController),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Video List')),
-      body: ListView.builder(
-        itemCount: videos.length,
-        itemBuilder: (context, index) {
-          final video = videos[index];
-          return ListTile(
-            title: Text(video['title'] ?? ''),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => VideoPlayerScreen(url: video['url'] ?? ''),
-                ),
+      body: Stack(
+        children: [
+          buildInvisibleWebView(),
+          ListView.builder(
+            itemCount: _items.length,
+            itemBuilder: (context, index) {
+              final item = _items[index];
+              return ListTile(
+                leading: item['img_url'] != null
+                    ? Image.network(
+                        item['img_url'],
+                        width: 100,
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                title: Text(item['title'] ?? ''),
+                onTap: () {
+                  final detail = item['detail_url'];
+                  if (detail != null) {
+                    _loadingDetail = true;
+                    _webViewController.loadRequest(Uri.parse(detail));
+                  }
+                },
               );
             },
-          );
-        },
+          ),
+        ],
       ),
     );
   }

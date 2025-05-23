@@ -1,6 +1,7 @@
 # VideoTV
 
-這是一個簡單的 Flutter Android 範例，進入後會顯示預設的影片清單，點擊影片即可透過 `video_player` 套件進入播放畫面。
+這是一個簡單的 Flutter Android 範例。啟動後會透過隱藏式 `WebView` 抓取 jable.tv 的影片清單，
+點擊影片後會解析頁面中的 m3u8 連結並以 `video_player` 播放。
 
 ## 開始使用
 
