@@ -1,0 +1,10 @@
+# Flutter build outputs
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.dart_tool/
+.packages
+.pub-cache/
+.idea/
+__pycache__/
+video_list.json
