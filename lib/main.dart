@@ -81,7 +81,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(url: url),
+                    builder: (_) => VideoPlayerScreen(url: url!),
                   ),
                 );
               }
