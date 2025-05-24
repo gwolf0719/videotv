@@ -7,8 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'firebase_options.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
@@ -34,6 +41,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late final WebViewController _webViewController;
+  final DatabaseReference _dbRef =
+      FirebaseDatabase.instance.ref().child('videos');
   List<Map<String, dynamic>> _items = [];
   bool _isLoading = false;
   String _statusMessage = '準備開始爬蟲';
@@ -42,6 +51,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     _initializeWebView();
+    _loadVideosFromFirebase();
   }
 
   void _initializeWebView() {
@@ -57,6 +67,26 @@ class _MyHomePageState extends State<MyHomePage> {
           },
         ),
       );
+  }
+
+  Future<void> _loadVideosFromFirebase() async {
+    final snapshot = await _dbRef.get();
+    final data = snapshot.value;
+    if (data is List) {
+      setState(() {
+        _items = data
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      });
+    } else if (data is Map) {
+      setState(() {
+        _items = (data as Map).values
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    }
   }
 
   Future<void> _startCrawling() async {
@@ -121,6 +151,7 @@ class _MyHomePageState extends State<MyHomePage> {
           _isLoading = false;
           _statusMessage = '成功抓取 ${_items.length} 個影片';
         });
+        await _dbRef.set(_items);
       } else {
         throw Exception('抓取失敗');
       }
