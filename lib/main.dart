@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'firebase_options.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,7 +82,8 @@ class _MyHomePageState extends State<MyHomePage> {
       });
     } else if (data is Map) {
       setState(() {
-        _items = (data as Map).values
+        _items = (data as Map)
+            .values
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
@@ -120,7 +122,7 @@ class _MyHomePageState extends State<MyHomePage> {
           console.log('找到', items.length, '個影片');
           
           const videos = [];
-          for (let i = 0; i < Math.min(items.length, 5); i++) {
+          for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const titleElement = item.querySelector('.detail .title a');
             const imgElement = item.querySelector('img');
@@ -166,12 +168,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _playVideo(Map<String, dynamic> video) async {
     final detailUrl = video['detail_url'];
     if (detailUrl == null || detailUrl.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('沒有找到影片詳細頁面'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showToast('沒有找到影片詳細頁面');
       return;
     }
 
@@ -204,20 +201,10 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('無法找到播放地址'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showToast('無法找到播放地址');
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('載入失敗: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showToast('載入失敗: $e');
     }
 
     setState(() {
@@ -281,98 +268,109 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  void _showToast(String message) {
+    Fluttertoast.showToast(
+      msg: message,
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+      backgroundColor: Colors.black87,
+      textColor: Colors.white,
+      fontSize: 16.0,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('VideoTV'),
-        backgroundColor: Colors.blue,
-      ),
-      body: Column(
+      body: Stack(
         children: [
-          // 狀態欄
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey.shade100,
-            child: Row(
-              children: [
-                if (_isLoading) ...[
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-                Expanded(child: Text(_statusMessage)),
-                if (!_isLoading)
-                  ElevatedButton(
-                    onPressed: _startCrawling,
-                    child: const Text('開始爬蟲'),
-                  ),
-              ],
-            ),
-          ),
-
-          // 影片列表
-          Expanded(
+          // 影片網格列表
+          Positioned.fill(
             child: _items.isEmpty
-                ? const Center(
-                    child: Text('尚無影片資料'),
-                  )
-                : ListView.builder(
+                ? const Center(child: Text('尚無影片資料'))
+                : GridView.builder(
+                    padding: const EdgeInsets.only(bottom: 80),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 4, // 每行4個
+                      childAspectRatio: 0.7, // 可依需求調整
+                    ),
                     itemCount: _items.length,
                     itemBuilder: (context, index) {
                       final item = _items[index];
                       return Card(
                         margin: const EdgeInsets.all(8),
-                        child: ListTile(
-                          leading: item['img_url'].isNotEmpty
-                              ? Image.network(
-                                  item['img_url'],
-                                  width: 80,
-                                  height: 60,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      width: 80,
-                                      height: 60,
-                                      color: Colors.grey.shade300,
-                                      child: const Icon(Icons.video_library),
-                                    );
-                                  },
-                                )
-                              : Container(
-                                  width: 80,
-                                  height: 60,
-                                  color: Colors.grey.shade300,
-                                  child: const Icon(Icons.video_library),
-                                ),
-                          title: Text(
-                            item['title'],
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text('影片 ${item['id']}'),
-                          trailing: const Icon(Icons.play_arrow),
+                        child: InkWell(
                           onTap: () {
-                            print("點擊影片: ${item['title']}");
+                            print("點擊影片: \\${item['title']}");
                             _playVideo(item);
                           },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                child: item['img_url'].isNotEmpty
+                                    ? Image.network(
+                                        item['img_url'],
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          return Container(
+                                            color: Colors.grey.shade300,
+                                            child:
+                                                const Icon(Icons.video_library),
+                                          );
+                                        },
+                                      )
+                                    : Container(
+                                        color: Colors.grey.shade300,
+                                        child: const Icon(Icons.video_library),
+                                      ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Text(
+                                  item['title'],
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8.0),
+                                child: Text(
+                                  '影片 \\${item['id']}',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
                   ),
           ),
-
           // 隱藏的 WebView
-          SizedBox(
-            height: 1,
-            child: WebViewWidget(controller: _webViewController),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SizedBox(
+              height: 1,
+              child: WebViewWidget(controller: _webViewController),
+            ),
           ),
         ],
       ),
+      floatingActionButton: !_isLoading
+          ? FloatingActionButton.extended(
+              onPressed: _startCrawling,
+              label: const Text('開始爬蟲'),
+              icon: const Icon(Icons.cloud_download),
+            )
+          : null,
     );
   }
 }
