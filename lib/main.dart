@@ -14,6 +14,8 @@ import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+import 'package:open_file/open_file.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,6 +53,11 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isLoading = false;
   String _statusMessage = '準備開始爬蟲';
   bool _isVideoLoading = false;
+  double? _downloadProgress; // 下載進度百分比 (0~1)
+  String? _downloadStatus; // 下載狀態訊息
+  double? _apkDownloadProgress;
+  String? _apkDownloadStatus;
+  String? _apkFilePath;
 
   @override
   void initState() {
@@ -92,26 +99,86 @@ class _MyHomePageState extends State<MyHomePage> {
           showDialog(
             context: context,
             barrierDismissible: false,
-            builder: (ctx) => AlertDialog(
-              title: const Text('有新版本可用'),
-              content: Text(
-                  '目前版本：$localVersion\n最新版本：$latestVersion\n請下載最新版以獲得最佳體驗。'),
-              actions: [
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(ctx);
-                    if (await canLaunchUrl(Uri.parse(apkUrl))) {
-                      launchUrl(Uri.parse(apkUrl),
-                          mode: LaunchMode.externalApplication);
-                    }
-                  },
-                  child: const Text('下載新版'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('稍後'),
-                ),
-              ],
+            builder: (ctx) => StatefulBuilder(
+              builder: (context, setStateDialog) {
+                return AlertDialog(
+                  title: const Text('有新版本可用'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                          '目前版本：$localVersion\n最新版本：$latestVersion\n請下載最新版以獲得最佳體驗。'),
+                      if (_apkDownloadProgress != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16.0),
+                          child: Column(
+                            children: [
+                              LinearProgressIndicator(
+                                  value: _apkDownloadProgress),
+                              const SizedBox(height: 8),
+                              Text(_apkDownloadStatus ?? '',
+                                  style: const TextStyle(fontSize: 14)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    if (_apkFilePath != null)
+                      TextButton(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          await OpenFile.open(_apkFilePath!);
+                        },
+                        child: const Text('安裝/開啟'),
+                      ),
+                    if (_apkDownloadProgress == null ||
+                        _apkDownloadProgress! < 1)
+                      TextButton(
+                        onPressed: () async {
+                          setStateDialog(() {
+                            _apkDownloadProgress = 0;
+                            _apkDownloadStatus = '開始下載...';
+                          });
+                          try {
+                            final dir =
+                                await getApplicationDocumentsDirectory();
+                            final filePath = '${dir.path}/update.apk';
+                            final dio = Dio();
+                            await dio.download(
+                              apkUrl,
+                              filePath,
+                              onReceiveProgress: (received, total) {
+                                if (total != -1) {
+                                  setStateDialog(() {
+                                    _apkDownloadProgress = received / total;
+                                    _apkDownloadStatus =
+                                        '下載中 ${(100 * _apkDownloadProgress!).toStringAsFixed(0)}%';
+                                  });
+                                }
+                              },
+                            );
+                            setStateDialog(() {
+                              _apkDownloadProgress = 1;
+                              _apkDownloadStatus = '下載完成';
+                              _apkFilePath = filePath;
+                            });
+                          } catch (e) {
+                            setStateDialog(() {
+                              _apkDownloadProgress = null;
+                              _apkDownloadStatus = '下載失敗: $e';
+                            });
+                          }
+                        },
+                        child: const Text('下載新版'),
+                      ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('稍後'),
+                    ),
+                  ],
+                );
+              },
             ),
           );
         }
@@ -328,6 +395,42 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Future<void> _downloadVideo(String url, String fileName) async {
+    setState(() {
+      _downloadProgress = 0;
+      _downloadStatus = '開始下載...';
+    });
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final savePath = '${dir.path}/$fileName';
+      final dio = Dio();
+      await dio.download(
+        url,
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            setState(() {
+              _downloadProgress = received / total;
+              _downloadStatus =
+                  '下載中... ${(100 * _downloadProgress!).toStringAsFixed(0)}%';
+            });
+          }
+        },
+      );
+      setState(() {
+        _downloadProgress = 1;
+        _downloadStatus = '下載完成: $fileName';
+      });
+      Fluttertoast.showToast(msg: '下載完成: $fileName');
+    } catch (e) {
+      setState(() {
+        _downloadProgress = null;
+        _downloadStatus = '下載失敗: $e';
+      });
+      Fluttertoast.showToast(msg: '下載失敗: $e');
+    }
+  }
+
   void _showToast(String message) {
     Fluttertoast.showToast(
       msg: message,
@@ -431,6 +534,23 @@ class _MyHomePageState extends State<MyHomePage> {
                 ),
               ),
             ),
+          if (_downloadProgress != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 60,
+              child: Column(
+                children: [
+                  LinearProgressIndicator(value: _downloadProgress),
+                  if (_downloadStatus != null)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text(_downloadStatus!,
+                          style: const TextStyle(color: Colors.white)),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
       floatingActionButton: !_isLoading
@@ -441,6 +561,16 @@ class _MyHomePageState extends State<MyHomePage> {
             )
           : null,
     );
+  }
+
+  Future<String?> _extractPlayUrlFromDetail(String detailUrl) async {
+    try {
+      await _webViewController.loadRequest(Uri.parse(detailUrl));
+      await Future.delayed(const Duration(seconds: 3));
+      return await _extractPlayUrl();
+    } catch (e) {
+      return null;
+    }
   }
 }
 
