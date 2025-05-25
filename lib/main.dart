@@ -400,6 +400,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   String? _error;
   bool _isLoading = true;
   final FocusNode _focusNode = FocusNode();
+  bool _showControls = false;
+  Timer? _hideControlsTimer;
+  Map<LogicalKeyboardKey, DateTime> _keyDownTime = {};
 
   @override
   void initState() {
@@ -460,10 +463,23 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  void _onUserInteraction() {
+    setState(() {
+      _showControls = true;
+    });
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+      setState(() {
+        _showControls = false;
+      });
+    });
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
+    _hideControlsTimer?.cancel();
     super.dispose();
   }
 
@@ -472,17 +488,80 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     return RawKeyboardListener(
       focusNode: _focusNode,
       autofocus: true,
-      onKey: (RawKeyEvent event) {
+      onKey: (RawKeyEvent event) async {
         if (event is RawKeyDownEvent) {
-          if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            final newPosition =
-                _controller.value.position + Duration(seconds: 10);
-            _controller.seekTo(newPosition);
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            final newPosition =
-                _controller.value.position - Duration(seconds: 10);
-            _controller.seekTo(
-                newPosition > Duration.zero ? newPosition : Duration.zero);
+          _onUserInteraction();
+          // 返回鍵直接退出
+          if (event.logicalKey == LogicalKeyboardKey.escape ||
+              event.logicalKey == LogicalKeyboardKey.goBack ||
+              event.logicalKey == LogicalKeyboardKey.backspace) {
+            Navigator.pop(context);
+            HapticFeedback.selectionClick();
+            return;
+          }
+          // 上下鍵顯示/隱藏控制層
+          if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+              event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            setState(() {
+              _showControls = !_showControls;
+            });
+            HapticFeedback.selectionClick();
+            return;
+          }
+          // OK/Enter/空白鍵切換播放/暫停
+          if (event.logicalKey == LogicalKeyboardKey.select ||
+              event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.space) {
+            if (_controller.value.isPlaying) {
+              _controller.pause();
+            } else {
+              _controller.play();
+            }
+            HapticFeedback.selectionClick();
+            return;
+          }
+          // 左右鍵記錄按下時間
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+              event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            _keyDownTime[event.logicalKey] = DateTime.now();
+          }
+        } else if (event is RawKeyUpEvent) {
+          // 左右鍵快轉/倒轉
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+              event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            final downTime = _keyDownTime[event.logicalKey];
+            if (downTime != null) {
+              final duration = DateTime.now().difference(downTime);
+              if (duration.inMilliseconds > 500) {
+                // 長按 30 秒
+                if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                  final newPosition =
+                      _controller.value.position + Duration(seconds: 30);
+                  _controller.seekTo(newPosition);
+                } else {
+                  final newPosition =
+                      _controller.value.position - Duration(seconds: 30);
+                  _controller.seekTo(newPosition > Duration.zero
+                      ? newPosition
+                      : Duration.zero);
+                }
+              } else {
+                // 點按 10 秒
+                if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+                  final newPosition =
+                      _controller.value.position + Duration(seconds: 10);
+                  _controller.seekTo(newPosition);
+                } else {
+                  final newPosition =
+                      _controller.value.position - Duration(seconds: 10);
+                  _controller.seekTo(newPosition > Duration.zero
+                      ? newPosition
+                      : Duration.zero);
+                }
+              }
+              HapticFeedback.selectionClick();
+              _keyDownTime.remove(event.logicalKey);
+            }
           }
         }
       },
@@ -493,7 +572,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             : _isLoading
                 ? _buildLoadingWidget()
                 : _initialized
-                    ? _buildPlayerWidget()
+                    ? _buildPlayerWidgetWithControls()
                     : _buildLoadingWidget(),
       ),
     );
@@ -572,7 +651,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
   }
 
-  Widget _buildPlayerWidget() {
+  Widget _buildPlayerWidgetWithControls() {
     return Stack(
       children: [
         // 全螢幕影片播放器
@@ -582,89 +661,104 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             child: VideoPlayer(_controller),
           ),
         ),
-
-        // 控制層
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withOpacity(0.7),
-                  Colors.transparent,
-                ],
-              ),
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back,
-                        color: Colors.white, size: 28),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.title,
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+        // 控制層（自動隱藏/顯示）
+        AnimatedOpacity(
+          opacity: _showControls ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 300),
+          child: IgnorePointer(
+            ignoring: !_showControls,
+            child: Stack(
+              children: [
+                // 控制層
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.7),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: SafeArea(
+                      child: Row(
+                        children: [
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.arrow_back,
+                                color: Colors.white, size: 28),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              widget.title,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 16),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-
-        // 播放/暫停按鈕
-        Center(
-          child: GestureDetector(
-            onTap: () {
-              setState(() {
-                if (_controller.value.isPlaying) {
-                  _controller.pause();
-                } else {
-                  _controller.play();
-                }
-              });
-            },
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.5),
-                shape: BoxShape.circle,
-              ),
-              padding: const EdgeInsets.all(20),
-              child: Icon(
-                _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
-                size: 48,
-              ),
-            ),
-          ),
-        ),
-
-        // 進度條
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            child: VideoProgressIndicator(
-              _controller,
-              allowScrubbing: true,
-              colors: const VideoProgressColors(
-                playedColor: Colors.red,
-                bufferedColor: Colors.white30,
-                backgroundColor: Colors.white10,
-              ),
+                ),
+                // 播放/暫停按鈕
+                Center(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        if (_controller.value.isPlaying) {
+                          _controller.pause();
+                        } else {
+                          _controller.play();
+                        }
+                        _onUserInteraction();
+                      });
+                      HapticFeedback.selectionClick();
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(20),
+                      child: Icon(
+                        _controller.value.isPlaying
+                            ? Icons.pause
+                            : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 48,
+                      ),
+                    ),
+                  ),
+                ),
+                // 進度條
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    child: VideoProgressIndicator(
+                      _controller,
+                      allowScrubbing: true,
+                      colors: const VideoProgressColors(
+                        playedColor: Colors.red,
+                        bufferedColor: Colors.white30,
+                        backgroundColor: Colors.white10,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
