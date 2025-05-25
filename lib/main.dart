@@ -12,6 +12,8 @@ import 'package:firebase_database/firebase_database.dart';
 import 'firebase_options.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,8 +55,70 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _showAppVersionToast();
+    _checkForUpdate();
     _initializeWebView();
     _loadVideosFromFirebase();
+  }
+
+  Future<void> _showAppVersionToast() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      Fluttertoast.showToast(
+        msg: '版本：${info.version}',
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM,
+        backgroundColor: Colors.black87,
+        textColor: Colors.white,
+        fontSize: 16.0,
+      );
+    } catch (e) {}
+  }
+
+  Future<void> _checkForUpdate() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final localVersion = info.version;
+      final ref = FirebaseDatabase.instance.ref();
+      final snapshot = await ref.child('latest_version_info').get();
+      if (snapshot.exists) {
+        final data = Map<String, dynamic>.from(snapshot.value as Map);
+        final latestVersion = data['latest_version'] ?? '';
+        final apkUrl = data['apk_url'] ?? '';
+        if (latestVersion != '' &&
+            latestVersion != localVersion &&
+            apkUrl != '') {
+          if (!mounted) return;
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => AlertDialog(
+              title: const Text('有新版本可用'),
+              content: Text(
+                  '目前版本：$localVersion\n最新版本：$latestVersion\n請下載最新版以獲得最佳體驗。'),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    if (await canLaunchUrl(Uri.parse(apkUrl))) {
+                      launchUrl(Uri.parse(apkUrl),
+                          mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  child: const Text('下載新版'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('稍後'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // 忽略錯誤，不影響主流程
+    }
   }
 
   void _initializeWebView() {
@@ -403,6 +467,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _showControls = false;
   Timer? _hideControlsTimer;
   Map<LogicalKeyboardKey, DateTime> _keyDownTime = {};
+  double _playbackSpeed = 1.0;
+  bool _isFullScreen = false;
+  OverlayEntry? _fastSeekOverlay;
 
   @override
   void initState() {
@@ -412,17 +479,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _initializePlayer() async {
     try {
-      print("🎬 正在初始化播放器，URL: ${widget.url}");
-
-      // 清理 URL
+      print("🎬 正在初始化播放器，URL: \\${widget.url}");
       String cleanUrl = widget.url.trim();
       if (cleanUrl.startsWith('"') && cleanUrl.endsWith('"')) {
         cleanUrl = cleanUrl.substring(1, cleanUrl.length - 1);
       }
-
-      print("🎬 清理後的 URL: $cleanUrl");
-
-      // 創建播放器控制器，支援 HLS
+      print("🎬 清理後的 URL: \\${cleanUrl}");
       _controller = VideoPlayerController.networkUrl(
         Uri.parse(cleanUrl),
         httpHeaders: {
@@ -432,7 +494,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           'Accept': '*/*',
         },
       );
-
       _controller.addListener(() {
         if (_controller.value.hasError) {
           setState(() {
@@ -441,16 +502,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           });
         }
       });
-
       await _controller.initialize();
-
       if (mounted) {
         setState(() {
           _initialized = true;
           _isLoading = false;
         });
-
-        // 自動開始播放
+        await _controller.setPlaybackSpeed(_playbackSpeed);
         await _controller.play();
       }
     } catch (e) {
@@ -475,11 +533,104 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     });
   }
 
+  void _onDoubleTap(bool isRight) {
+    final current = _controller.value.position;
+    final seek = isRight
+        ? current + const Duration(seconds: 10)
+        : current - const Duration(seconds: 10);
+    _controller.seekTo(seek > Duration.zero ? seek : Duration.zero);
+    _showFastSeekOverlay(isRight);
+    HapticFeedback.mediumImpact();
+    _onUserInteraction();
+  }
+
+  void _showFastSeekOverlay(bool isRight) {
+    _fastSeekOverlay?.remove();
+    _fastSeekOverlay = OverlayEntry(
+      builder: (context) => Positioned.fill(
+        child: IgnorePointer(
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (!isRight)
+                  Icon(Icons.fast_rewind, color: Colors.white, size: 80),
+                const SizedBox(width: 40),
+                if (isRight)
+                  Icon(Icons.fast_forward, color: Colors.white, size: 80),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_fastSeekOverlay!);
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _fastSeekOverlay?.remove();
+      _fastSeekOverlay = null;
+    });
+  }
+
+  void _onChangeSpeed() async {
+    final speeds = [0.5, 1.0, 1.5, 2.0];
+    final result = await showModalBottomSheet<double>(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: speeds
+            .map((s) => ListTile(
+                  title: Text('${s}x',
+                      style: TextStyle(
+                          fontWeight: s == _playbackSpeed
+                              ? FontWeight.bold
+                              : FontWeight.normal)),
+                  onTap: () => Navigator.pop(context, s),
+                ))
+            .toList(),
+      ),
+    );
+    if (result != null) {
+      setState(() {
+        _playbackSpeed = result;
+      });
+      await _controller.setPlaybackSpeed(_playbackSpeed);
+      _onUserInteraction();
+    }
+  }
+
+  void _toggleFullScreen() {
+    setState(() {
+      _isFullScreen = !_isFullScreen;
+    });
+    if (_isFullScreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
+    _onUserInteraction();
+  }
+
   @override
   void dispose() {
     _controller.dispose();
     _focusNode.dispose();
     _hideControlsTimer?.cancel();
+    _fastSeekOverlay?.remove();
+    if (_isFullScreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
     super.dispose();
   }
 
@@ -652,117 +803,163 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _buildPlayerWidgetWithControls() {
-    return Stack(
-      children: [
-        // 全螢幕影片播放器
-        Center(
-          child: AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
-          ),
-        ),
-        // 控制層（自動隱藏/顯示）
-        AnimatedOpacity(
-          opacity: _showControls ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 300),
-          child: IgnorePointer(
-            ignoring: !_showControls,
-            child: Stack(
-              children: [
-                // 控制層
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withOpacity(0.7),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
-                    child: SafeArea(
-                      child: Row(
-                        children: [
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.arrow_back,
-                                color: Colors.white, size: 28),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.title,
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 16),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                // 播放/暫停按鈕
-                Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        if (_controller.value.isPlaying) {
-                          _controller.pause();
-                        } else {
-                          _controller.play();
-                        }
-                        _onUserInteraction();
-                      });
-                      HapticFeedback.selectionClick();
-                    },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
-                        shape: BoxShape.circle,
-                      ),
-                      padding: const EdgeInsets.all(20),
-                      child: Icon(
-                        _controller.value.isPlaying
-                            ? Icons.pause
-                            : Icons.play_arrow,
-                        color: Colors.white,
-                        size: 48,
-                      ),
-                    ),
-                  ),
-                ),
-                // 進度條
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    child: VideoProgressIndicator(
-                      _controller,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Colors.red,
-                        bufferedColor: Colors.white30,
-                        backgroundColor: Colors.white10,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _onUserInteraction,
+      onDoubleTapDown: (details) {
+        final width = MediaQuery.of(context).size.width;
+        if (details.localPosition.dx < width / 2) {
+          _onDoubleTap(false); // 左半邊倒退
+        } else {
+          _onDoubleTap(true); // 右半邊快轉
+        }
+      },
+      child: Stack(
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: _controller.value.aspectRatio,
+              child: VideoPlayer(_controller),
             ),
           ),
-        ),
-      ],
+          AnimatedOpacity(
+            opacity: _showControls ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 300),
+            child: IgnorePointer(
+              ignoring: !_showControls,
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withOpacity(0.7),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: SafeArea(
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.arrow_back,
+                                  color: Colors.white, size: 28),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                widget.title,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 16),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: _onChangeSpeed,
+                              icon: Icon(Icons.speed,
+                                  color: Colors.white, size: 26),
+                              tooltip: '播放速度',
+                            ),
+                            IconButton(
+                              onPressed: _toggleFullScreen,
+                              icon: Icon(
+                                  _isFullScreen
+                                      ? Icons.fullscreen_exit
+                                      : Icons.fullscreen,
+                                  color: Colors.white,
+                                  size: 26),
+                              tooltip: _isFullScreen ? '退出全螢幕' : '全螢幕',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Center(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (_controller.value.isPlaying) {
+                            _controller.pause();
+                          } else {
+                            _controller.play();
+                          }
+                          _onUserInteraction();
+                        });
+                        HapticFeedback.selectionClick();
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        padding: const EdgeInsets.all(20),
+                        child: Icon(
+                          _controller.value.isPlaying
+                              ? Icons.pause
+                              : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          VideoProgressIndicator(
+                            _controller,
+                            allowScrubbing: true,
+                            colors: const VideoProgressColors(
+                              playedColor: Colors.red,
+                              bufferedColor: Colors.white30,
+                              backgroundColor: Colors.white10,
+                            ),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_formatDuration(_controller.value.position),
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12)),
+                              Text(_formatDuration(_controller.value.duration),
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 12)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
+  }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final twoDigitMinutes = twoDigits(d.inMinutes.remainder(60));
+    final twoDigitSeconds = twoDigits(d.inSeconds.remainder(60));
+    return '${d.inHours > 0 ? '${twoDigits(d.inHours)}:' : ''}$twoDigitMinutes:$twoDigitSeconds';
   }
 }
