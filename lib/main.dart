@@ -11,6 +11,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'firebase_options.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:flutter/services.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,6 +48,7 @@ class _MyHomePageState extends State<MyHomePage> {
   List<Map<String, dynamic>> _items = [];
   bool _isLoading = false;
   String _statusMessage = '準備開始爬蟲';
+  bool _isVideoLoading = false;
 
   @override
   void initState() {
@@ -166,31 +168,26 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _playVideo(Map<String, dynamic> video) async {
+    if (_isVideoLoading) return;
+    setState(() {
+      _isVideoLoading = true;
+    });
     final detailUrl = video['detail_url'];
     if (detailUrl == null || detailUrl.isEmpty) {
       _showToast('沒有找到影片詳細頁面');
+      setState(() {
+        _isVideoLoading = false;
+      });
       return;
     }
-
-    setState(() {
-      _statusMessage = '正在載入影片頁面...';
-    });
-
     try {
       // 載入影片詳細頁面
       await _webViewController.loadRequest(Uri.parse(detailUrl));
-
       // 等待頁面載入
       await Future.delayed(const Duration(seconds: 3));
-
       // 嘗試獲取播放地址
       final String? playUrl = await _extractPlayUrl();
-
       if (playUrl != null && playUrl.isNotEmpty) {
-        setState(() {
-          _statusMessage = '準備播放影片...';
-        });
-
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -206,9 +203,8 @@ class _MyHomePageState extends State<MyHomePage> {
     } catch (e) {
       _showToast('載入失敗: $e');
     }
-
     setState(() {
-      _statusMessage = '準備開始爬蟲';
+      _isVideoLoading = false;
     });
   }
 
@@ -362,6 +358,15 @@ class _MyHomePageState extends State<MyHomePage> {
               child: WebViewWidget(controller: _webViewController),
             ),
           ),
+          if (_isVideoLoading)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black54,
+                child: const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+            ),
         ],
       ),
       floatingActionButton: !_isLoading
@@ -394,6 +399,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _initialized = false;
   String? _error;
   bool _isLoading = true;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
@@ -457,20 +463,39 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _error != null
-          ? _buildErrorWidget()
-          : _isLoading
-              ? _buildLoadingWidget()
-              : _initialized
-                  ? _buildPlayerWidget()
-                  : _buildLoadingWidget(),
+    return RawKeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKey: (RawKeyEvent event) {
+        if (event is RawKeyDownEvent) {
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            final newPosition =
+                _controller.value.position + Duration(seconds: 10);
+            _controller.seekTo(newPosition);
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            final newPosition =
+                _controller.value.position - Duration(seconds: 10);
+            _controller.seekTo(
+                newPosition > Duration.zero ? newPosition : Duration.zero);
+          }
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: _error != null
+            ? _buildErrorWidget()
+            : _isLoading
+                ? _buildLoadingWidget()
+                : _initialized
+                    ? _buildPlayerWidget()
+                    : _buildLoadingWidget(),
+      ),
     );
   }
 
