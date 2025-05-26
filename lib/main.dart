@@ -16,7 +16,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart';
 import 'package:open_file/open_file.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,7 +63,6 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _requestStoragePermission();
     _showAppVersionToast();
     _checkForUpdate();
     _initializeWebView();
@@ -82,10 +81,6 @@ class _MyHomePageState extends State<MyHomePage> {
         fontSize: 16.0,
       );
     } catch (e) {}
-  }
-
-  Future<void> _requestStoragePermission() async {
-    await [Permission.storage, Permission.manageExternalStorage].request();
   }
 
   Future<void> _checkForUpdate() async {
@@ -134,7 +129,47 @@ class _MyHomePageState extends State<MyHomePage> {
                       TextButton(
                         onPressed: () async {
                           Navigator.pop(ctx);
-                          await OpenFile.open(_apkFilePath!);
+                          try {
+                            // 檢查檔案是否存在
+                            final apkFile =
+                                File('/storage/emulated/0/Download/update.apk');
+                            if (apkFile.existsSync()) {
+                              print('[APK安裝] 開啟檔案: ${apkFile.path}');
+
+                              // 使用 Android Intent 直接安裝
+                              if (Platform.isAndroid) {
+                                const platform = MethodChannel('install_apk');
+                                try {
+                                  await platform.invokeMethod('installApk', {
+                                    'filePath': apkFile.path,
+                                  });
+                                } catch (e) {
+                                  print('[APK安裝] Intent 方式失敗，嘗試 OpenFile: $e');
+                                  // fallback 到原本方式
+                                  final result =
+                                      await OpenFile.open(apkFile.path);
+                                  print(
+                                      '[APK安裝] OpenFile 結果: ${result.message}');
+                                  if (result.type != ResultType.done) {
+                                    _showToast('開啟失敗: ${result.message}');
+                                  }
+                                }
+                              } else {
+                                final result =
+                                    await OpenFile.open(apkFile.path);
+                                print('[APK安裝] 開啟結果: ${result.message}');
+                                if (result.type != ResultType.done) {
+                                  _showToast('開啟失敗: ${result.message}');
+                                }
+                              }
+                            } else {
+                              print('[APK安裝] 檔案不存在: ${apkFile.path}');
+                              _showToast('檔案不存在，請重新下載');
+                            }
+                          } catch (e) {
+                            print('[APK安裝] 錯誤: $e');
+                            _showToast('開啟失敗: $e');
+                          }
                         },
                         child: const Text('安裝/開啟'),
                       ),
@@ -142,37 +177,52 @@ class _MyHomePageState extends State<MyHomePage> {
                         _apkDownloadProgress! < 1)
                       TextButton(
                         onPressed: () async {
+                          print('[APK下載] 開始下載...');
+
                           setStateDialog(() {
                             _apkDownloadProgress = 0;
                             _apkDownloadStatus = '開始下載...';
                           });
+
                           try {
-                            final dirs = await getExternalStorageDirectories(
-                                type: StorageDirectory.downloads);
-                            final dir = dirs?.first;
-                            final filePath = dir != null
-                                ? '${dir.path}/update.apk'
-                                : '${(await getApplicationDocumentsDirectory()).path}/update.apk';
+                            // 直接使用系統 Download 資料夾路徑
+                            final downloadPath = '/storage/emulated/0/Download';
+                            final filePath = '$downloadPath/update.apk';
+                            print('[APK下載] 準備下載到: $filePath');
+
                             final dio = Dio();
                             await dio.download(
                               apkUrl,
                               filePath,
                               onReceiveProgress: (received, total) {
                                 if (total != -1) {
+                                  final percent = (100 * received / total)
+                                      .toStringAsFixed(0);
+                                  print(
+                                      '[APK下載] 進度: $received/$total ($percent%)');
                                   setStateDialog(() {
                                     _apkDownloadProgress = received / total;
-                                    _apkDownloadStatus =
-                                        '下載中 ${(100 * _apkDownloadProgress!).toStringAsFixed(0)}%';
+                                    _apkDownloadStatus = '下載中 $percent%';
                                   });
                                 }
                               },
                             );
+
+                            // 檢查檔案是否真的存在
+                            final file = File(filePath);
+                            final exists = file.existsSync();
+                            final size = exists ? file.lengthSync() : 0;
+                            print(
+                                '[APK下載] 下載完成 檔案存在: $exists 大小: ${size}bytes 路徑: $filePath');
+
                             setStateDialog(() {
                               _apkDownloadProgress = 1;
-                              _apkDownloadStatus = '下載完成';
-                              _apkFilePath = filePath;
+                              _apkDownloadStatus =
+                                  exists ? '下載完成' : '下載失敗：檔案不存在';
+                              _apkFilePath = exists ? filePath : null;
                             });
                           } catch (e) {
+                            print('[APK下載] 下載失敗: $e');
                             setStateDialog(() {
                               _apkDownloadProgress = null;
                               _apkDownloadStatus = '下載失敗: $e';
@@ -429,6 +479,7 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         _downloadProgress = 1;
         _downloadStatus = '下載完成: $fileName';
+        print('[APK下載] 檔案是否存在: ${File(savePath).existsSync()} 路徑: $savePath');
       });
       Fluttertoast.showToast(msg: '下載完成: $fileName');
     } catch (e) {
