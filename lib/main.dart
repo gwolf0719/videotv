@@ -16,6 +16,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart';
 import 'package:open_file/open_file.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,6 +63,7 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    _requestStoragePermission();
     _showAppVersionToast();
     _checkForUpdate();
     _initializeWebView();
@@ -80,6 +82,10 @@ class _MyHomePageState extends State<MyHomePage> {
         fontSize: 16.0,
       );
     } catch (e) {}
+  }
+
+  Future<void> _requestStoragePermission() async {
+    await [Permission.storage, Permission.manageExternalStorage].request();
   }
 
   Future<void> _checkForUpdate() async {
@@ -141,9 +147,12 @@ class _MyHomePageState extends State<MyHomePage> {
                             _apkDownloadStatus = '開始下載...';
                           });
                           try {
-                            final dir =
-                                await getApplicationDocumentsDirectory();
-                            final filePath = '${dir.path}/update.apk';
+                            final dirs = await getExternalStorageDirectories(
+                                type: StorageDirectory.downloads);
+                            final dir = dirs?.first;
+                            final filePath = dir != null
+                                ? '${dir.path}/update.apk'
+                                : '${(await getApplicationDocumentsDirectory()).path}/update.apk';
                             final dio = Dio();
                             await dio.download(
                               apkUrl,
