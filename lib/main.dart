@@ -71,6 +71,10 @@ class _MyHomePageState extends State<MyHomePage> {
   // 新增：控制右側選單顯示的 GlobalKey
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  // 新增：全螢幕 loading 過場動畫
+  bool _isShowingLoadingTransition = false;
+  String _loadingMessage = '正在處理中...';
+
   @override
   void initState() {
     super.initState();
@@ -316,6 +320,12 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _loadVideosFromFirebase() async {
+    // 顯示全螢幕 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = true;
+      _loadingMessage = '正在載入影片列表...';
+    });
+
     final snapshot = await _dbRef.get();
     final data = snapshot.value;
     if (data is List) {
@@ -334,14 +344,41 @@ class _MyHomePageState extends State<MyHomePage> {
             .toList();
       });
     }
+
+    // 讀取完成後隱藏 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = false;
+    });
   }
 
   Future<void> _startCrawling() async {
+    // 顯示全螢幕 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = true;
+      _loadingMessage = '正在爬取真人影片...';
+    });
+
     await _realCrawler.startCrawling();
+
+    // 爬蟲完成後隱藏 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = false;
+    });
   }
 
   Future<void> _startAnimeCrawling() async {
+    // 顯示全螢幕 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = true;
+      _loadingMessage = '正在爬取動畫影片...';
+    });
+
     await _animeCrawler.startCrawling();
+
+    // 爬蟲完成後隱藏 loading 動畫
+    setState(() {
+      _isShowingLoadingTransition = false;
+    });
   }
 
   Future<void> _playVideo(Map<String, dynamic> video) async {
@@ -655,6 +692,125 @@ class _MyHomePageState extends State<MyHomePage> {
                     ],
                   ),
                 ),
+              // 全螢幕 loading 過場動畫
+              if (_isShowingLoadingTransition)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withOpacity(0.85),
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // 主要旋轉動畫
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 1200),
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            builder: (context, value, child) {
+                              return Transform.rotate(
+                                angle: value * 6.28, // 2 * pi
+                                child: Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.blue,
+                                      width: 4,
+                                    ),
+                                    gradient: SweepGradient(
+                                      colors: [
+                                        Colors.blue.withOpacity(0.1),
+                                        Colors.blue,
+                                        Colors.lightBlue,
+                                        Colors.blue.withOpacity(0.1),
+                                      ],
+                                      stops: [0.0, 0.3, 0.7, 1.0],
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.cloud_download,
+                                    color: Colors.white,
+                                    size: 40,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 24),
+                          // 文字動畫
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 800),
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            builder: (context, value, child) {
+                              return Opacity(
+                                opacity: value,
+                                child: Transform.scale(
+                                  scale: 0.8 + (value * 0.2),
+                                  child: Text(
+                                    _loadingMessage,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 16),
+                          // 進度條動畫
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 1000),
+                            tween: Tween(begin: 0.0, end: 1.0),
+                            builder: (context, value, child) {
+                              return Container(
+                                width: 200,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(2),
+                                  color: Colors.white.withOpacity(0.2),
+                                ),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Container(
+                                    width: 200 * value,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(2),
+                                      gradient: const LinearGradient(
+                                        colors: [
+                                          Colors.blue,
+                                          Colors.lightBlue,
+                                          Colors.cyan,
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          // 百分比動畫
+                          TweenAnimationBuilder<double>(
+                            duration: const Duration(milliseconds: 1000),
+                            tween: Tween(begin: 0.0, end: 100.0),
+                            builder: (context, value, child) {
+                              return Text(
+                                '${value.toInt()}%',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           // 右側抽屜選單
@@ -676,19 +832,26 @@ class _MyHomePageState extends State<MyHomePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(
-                            Icons.cloud_download,
-                            color: Colors.white,
-                            size: 30,
-                          ),
-                          const SizedBox(height: 10),
-                          const Text(
-                            '影片爬蟲',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          Row(
+                            children: [
+                              // 選單圖示
+                              const Icon(
+                                Icons.cloud_download,
+                                color: Colors.white,
+                                size: 30,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  '影片爬蟲',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           if (_isLoading)
                             Padding(
