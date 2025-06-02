@@ -9,6 +9,11 @@ class RealCrawler {
   final Function(String) onStatusChange;
   final Function(List<Map<String, dynamic>>) onDataUpdate;
 
+  // 新增：追蹤當前頁面和已有影片
+  int currentPage = 1; // 改為公開變數
+  List<Map<String, dynamic>> _allVideos = [];
+  bool _isBackgroundCrawling = false;
+
   RealCrawler({
     required this.webViewController,
     required this.dbRef,
@@ -17,22 +22,66 @@ class RealCrawler {
     required this.onDataUpdate,
   });
 
-  Future<void> startCrawling() async {
-    onLoadingChange(true);
-    onStatusChange('正在載入網站...');
+  Future<void> startCrawling({bool isBackgroundUpdate = false}) async {
+    if (!isBackgroundUpdate) {
+      onLoadingChange(true);
+      currentPage = 1;
+      // 載入現有資料
+      await _loadExistingData();
+    } else {
+      _isBackgroundCrawling = true;
+    }
+
+    onStatusChange('正在載入網站第 $currentPage 頁...');
 
     try {
       await webViewController.loadRequest(
-        Uri.parse('https://jable.tv/categories/chinese-subtitle/'),
+        Uri.parse('https://jable.tv/categories/chinese-subtitle/$currentPage/'),
       );
     } catch (e) {
-      onLoadingChange(false);
+      if (!isBackgroundUpdate) {
+        onLoadingChange(false);
+      }
+      _isBackgroundCrawling = false;
       onStatusChange('載入失敗: $e');
     }
   }
 
+  // 新增：載入現有資料
+  Future<void> _loadExistingData() async {
+    try {
+      final snapshot = await dbRef.get();
+      if (snapshot.exists) {
+        final data = snapshot.value;
+        if (data is List) {
+          _allVideos = data
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList();
+        } else if (data is Map) {
+          _allVideos = data.values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+    } catch (e) {
+      print('載入現有資料失敗: $e');
+      _allVideos = [];
+    }
+  }
+
+  // 新增：背景爬取下一頁
+  Future<void> crawlNextPageInBackground() async {
+    if (_isBackgroundCrawling) return;
+
+    currentPage++;
+    await startCrawling(isBackgroundUpdate: true);
+  }
+
   Future<void> extractVideoData() async {
-    onStatusChange('正在抓取影片資料...');
+    final isBackground = _isBackgroundCrawling;
+    onStatusChange('正在抓取第 $currentPage 頁影片資料...');
 
     try {
       final result = await webViewController.runJavaScriptReturningResult('''
@@ -47,10 +96,12 @@ class RealCrawler {
             const imgElement = item.querySelector('img');
             
             videos.push({
-              id: i + 1,
+              id: 'real_' + Date.now() + '_' + i, // 使用時間戳避免重複ID
               title: titleElement?.innerText?.trim() || '未知標題',
               detail_url: titleElement?.href || '',
-              img_url: imgElement?.getAttribute('data-src') || imgElement?.getAttribute('src') || ''
+              img_url: imgElement?.getAttribute('data-src') || imgElement?.getAttribute('src') || '',
+              page: $currentPage,
+              crawl_time: Date.now()
             });
           }
           
@@ -66,18 +117,52 @@ class RealCrawler {
       }
 
       if (data['success'] == true) {
-        List<dynamic> videos = data['videos'];
-        final items = videos.map((v) => Map<String, dynamic>.from(v)).toList();
-        onDataUpdate(items);
-        onLoadingChange(false);
-        onStatusChange('成功抓取 ${items.length} 個影片');
-        await dbRef.set(items);
+        List<dynamic> newVideos = data['videos'];
+        final newItems =
+            newVideos.map((v) => Map<String, dynamic>.from(v)).toList();
+
+        // 過濾重複的影片（根據標題和URL）
+        final filteredItems = <Map<String, dynamic>>[];
+        for (final newItem in newItems) {
+          final isDuplicate = _allVideos.any((existing) =>
+              existing['title'] == newItem['title'] &&
+              existing['detail_url'] == newItem['detail_url']);
+          if (!isDuplicate) {
+            filteredItems.add(newItem);
+          }
+        }
+
+        if (filteredItems.isNotEmpty) {
+          // 將新影片添加到前面（累進更新）
+          _allVideos.insertAll(0, filteredItems);
+
+          // 限制總數量，避免過多資料
+          if (_allVideos.length > 200) {
+            _allVideos = _allVideos.take(200).toList();
+          }
+
+          onDataUpdate(_allVideos);
+          await dbRef.set(_allVideos);
+
+          onStatusChange(
+              '第 $currentPage 頁：新增 ${filteredItems.length} 個影片，總計 ${_allVideos.length} 個');
+        } else {
+          onStatusChange('第 $currentPage 頁：沒有發現新影片');
+        }
+
+        if (!isBackground) {
+          onLoadingChange(false);
+        }
+        _isBackgroundCrawling = false;
       } else {
         throw Exception('抓取失敗');
       }
     } catch (e) {
-      onLoadingChange(false);
-      onStatusChange('抓取錯誤: $e');
+      if (!isBackground) {
+        onLoadingChange(false);
+      }
+      _isBackgroundCrawling = false;
+      onStatusChange('第 $currentPage 頁抓取錯誤: $e');
     }
   }
 

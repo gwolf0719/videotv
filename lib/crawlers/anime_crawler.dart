@@ -9,6 +9,11 @@ class AnimeCrawler {
   final Function(String) onStatusChange;
   final Function(List<Map<String, dynamic>>) onDataUpdate;
 
+  // 新增：追蹤當前頁面和已有影片
+  int currentPage = 1;
+  List<Map<String, dynamic>> _allVideos = [];
+  bool _isBackgroundCrawling = false;
+
   AnimeCrawler({
     required this.webViewController,
     required this.dbRef,
@@ -17,27 +22,71 @@ class AnimeCrawler {
     required this.onDataUpdate,
   });
 
-  Future<void> startCrawling() async {
-    onLoadingChange(true);
-    onStatusChange('正在載入網站...');
+  Future<void> startCrawling({bool isBackgroundUpdate = false}) async {
+    if (!isBackgroundUpdate) {
+      onLoadingChange(true);
+      currentPage = 1;
+      // 載入現有資料
+      await _loadExistingData();
+    } else {
+      _isBackgroundCrawling = true;
+    }
+
+    onStatusChange('正在載入動畫網站第 $currentPage 頁...');
 
     try {
       await webViewController.loadRequest(
         Uri.parse(
-            'https://hanime1.me/search?genre=%E6%B3%A1%E9%BA%B5%E7%95%AA'),
+            'https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&page=$currentPage'),
       );
       // 等待頁面載入完成
       await Future.delayed(const Duration(seconds: 5));
       await extractVideoData();
     } catch (e) {
-      onLoadingChange(false);
+      if (!isBackgroundUpdate) {
+        onLoadingChange(false);
+      }
+      _isBackgroundCrawling = false;
       onStatusChange('載入失敗: $e');
     }
   }
 
+  // 新增：載入現有資料
+  Future<void> _loadExistingData() async {
+    try {
+      final snapshot = await dbRef.get();
+      if (snapshot.exists) {
+        final data = snapshot.value;
+        if (data is List) {
+          _allVideos = data
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList();
+        } else if (data is Map) {
+          _allVideos = data.values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+    } catch (e) {
+      print('載入現有動畫資料失敗: $e');
+      _allVideos = [];
+    }
+  }
+
+  // 新增：背景爬取下一頁
+  Future<void> crawlNextPageInBackground() async {
+    if (_isBackgroundCrawling) return;
+
+    currentPage++;
+    await startCrawling(isBackgroundUpdate: true);
+  }
+
   Future<void> extractVideoData() async {
-    print('🔥 動畫爬蟲開始執行 extractVideoData');
-    onStatusChange('正在抓取影片資料...');
+    final isBackground = _isBackgroundCrawling;
+    print('🔥 動畫爬蟲開始執行 extractVideoData，第 $currentPage 頁');
+    onStatusChange('正在抓取第 $currentPage 頁動畫資料...');
 
     try {
       print('🔥 準備執行 JavaScript 爬蟲邏輯');
@@ -75,11 +124,13 @@ class AnimeCrawler {
             
             if (title && href) {
               videos.push({
-                id: i + 1,
+                id: 'anime_' + Date.now() + '_' + i,
                 title: title.substring(0, 100),
                 detail_url: href,
                 img_url: imgSrc,
-                episodes: 'N/A'
+                episodes: 'N/A',
+                page: $currentPage,
+                crawl_time: Date.now()
               });
               console.log('找到影片:', title);
             }
@@ -102,29 +153,58 @@ class AnimeCrawler {
           '🔥 解析後的資料: success=${data['success']}, videos數量=${data['videos']?.length}');
 
       if (data['success'] == true) {
-        List<dynamic> videos = data['videos'];
-        final items = videos.map((v) => Map<String, dynamic>.from(v)).toList();
+        List<dynamic> newVideos = data['videos'];
+        final newItems =
+            newVideos.map((v) => Map<String, dynamic>.from(v)).toList();
 
-        print('🔥 準備更新 Firebase，影片數量: ${items.length}');
-        if (items.isNotEmpty) {
-          print('🔥 第一個影片: ${items.first}');
+        // 過濾重複的影片（根據標題和URL）
+        final filteredItems = <Map<String, dynamic>>[];
+        for (final newItem in newItems) {
+          final isDuplicate = _allVideos.any((existing) =>
+              existing['title'] == newItem['title'] &&
+              existing['detail_url'] == newItem['detail_url']);
+          if (!isDuplicate) {
+            filteredItems.add(newItem);
+          }
         }
 
-        onDataUpdate(items);
-        onLoadingChange(false);
-        onStatusChange('成功抓取 ${items.length} 個影片');
+        if (filteredItems.isNotEmpty) {
+          // 將新影片添加到前面（累進更新）
+          _allVideos.insertAll(0, filteredItems);
 
-        print('🔥 開始執行 Firebase 更新...');
-        await dbRef.set(items);
-        print('🔥 Firebase 更新成功！');
+          // 限制總數量，避免過多資料
+          if (_allVideos.length > 200) {
+            _allVideos = _allVideos.take(200).toList();
+          }
+
+          print(
+              '🔥 準備更新 Firebase，新增影片數量: ${filteredItems.length}，總數: ${_allVideos.length}');
+
+          onDataUpdate(_allVideos);
+          await dbRef.set(_allVideos);
+
+          onStatusChange(
+              '第 $currentPage 頁：新增 ${filteredItems.length} 個動畫，總計 ${_allVideos.length} 個');
+          print('🔥 Firebase 更新成功！');
+        } else {
+          onStatusChange('第 $currentPage 頁：沒有發現新動畫');
+        }
+
+        if (!isBackground) {
+          onLoadingChange(false);
+        }
+        _isBackgroundCrawling = false;
       } else {
         print('🔥 JavaScript 返回失敗，嘗試替代方法');
         await _tryAlternativeMethod();
       }
     } catch (e) {
       print('🔥 JavaScript 執行失敗: $e');
-      onLoadingChange(false);
-      onStatusChange('抓取錯誤: $e');
+      if (!isBackground) {
+        onLoadingChange(false);
+      }
+      _isBackgroundCrawling = false;
+      onStatusChange('第 $currentPage 頁抓取錯誤: $e');
       await _tryAlternativeMethod();
     }
   }

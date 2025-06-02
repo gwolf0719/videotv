@@ -27,6 +27,19 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/foreground.png"
+  adaptive_icon_background: "assets/icon/background.png"
+  adaptive_icon_foreground: "assets/icon/foreground.png"
+  android_tv:
+    image_path: "assets/icon/foreground.png"
+    adaptive_icon_background: "assets/icon/background.png"
+    adaptive_icon_foreground: "assets/icon/foreground.png"
+    remove_alpha_ios: true
