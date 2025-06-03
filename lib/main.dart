@@ -790,31 +790,17 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       if (playUrl != null && playUrl.isNotEmpty) {
-        final String finalPlayUrl = playUrl; // 確保 playUrl 不是 null
-
-        // 根據影片類型選擇播放器
-        if (isAnime) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => VideoPlayerScreen(
-                title: video['title'] as String,
-                url: finalPlayUrl,
-                isAnime: true,
-              ),
+        // 導覽到播放器頁面（統一處理，不需要分別判斷影片類型）
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerScreen(
+              title: video['title'] as String,
+              url: playUrl!, // 使用非空斷言，因為已經檢查過不為null
+              isAnime: isAnime,
             ),
-          );
-        } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => VideoPlayerScreen(
-                title: video['title'] as String,
-                url: finalPlayUrl,
-              ),
-            ),
-          );
-        }
+          ),
+        );
       } else {
         // 無法自動提取播放地址時，詢問是否要在外部瀏覽器開啟
         if (mounted) {
@@ -1274,19 +1260,45 @@ class _MyHomePageState extends State<MyHomePage> {
   Widget _buildVideoGrid(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: GridView.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 4, // TV 模式使用 4 列
-          crossAxisSpacing: 20,
-          mainAxisSpacing: 20,
-          childAspectRatio: 0.65, // 調整為更寬的比例，適合影片比例
-        ),
-        itemCount: _items.length,
-        itemBuilder: (context, index) {
-          final item = _items[index];
-          final isAnime = _isAnimeVideo(item);
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 響應式設計：根據螢幕寬度決定列數
+          int crossAxisCount;
+          double childAspectRatio;
 
-          return _buildVideoCard(item, isAnime, theme);
+          if (constraints.maxWidth > 1200) {
+            // 大螢幕 (TV/桌面)
+            crossAxisCount = 4;
+            childAspectRatio = 0.65;
+          } else if (constraints.maxWidth > 800) {
+            // 平板
+            crossAxisCount = 3;
+            childAspectRatio = 0.7;
+          } else if (constraints.maxWidth > 600) {
+            // 大手機橫向
+            crossAxisCount = 2;
+            childAspectRatio = 0.75;
+          } else {
+            // 手機直向 - 改為2列，並調整比例避免文字被切掉
+            crossAxisCount = 2;
+            childAspectRatio = 0.85; // 增加高度比例，讓文字有足夠空間
+          }
+
+          return GridView.builder(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: crossAxisCount == 1 ? 0 : 12, // 減少間距適合手機
+              mainAxisSpacing: 16, // 減少主軸間距
+              childAspectRatio: childAspectRatio,
+            ),
+            itemCount: _items.length,
+            itemBuilder: (context, index) {
+              final item = _items[index];
+              final isAnime = _isAnimeVideo(item);
+
+              return _buildVideoCard(item, isAnime, theme);
+            },
+          );
         },
       ),
     );
@@ -2217,23 +2229,313 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Timer? _hideControlsTimer;
   double _playbackSpeed = 1.0;
   List<Map<String, dynamic>> _recommendedVideos = [];
-  bool _isFullscreen = false;
+  bool _isFullscreen = true; // 預設全螢幕
   final FocusNode _playerFocusNode = FocusNode();
   Timer? _continuousSeekTimer;
   bool _isLongPress = false;
   Map<LogicalKeyboardKey, DateTime> _keyDownTime = {};
+  bool _isLoadingRecommendations = false;
+
+  // Firebase 參考
+  late DatabaseReference _dbRef;
+  late DatabaseReference _animeDbRef;
 
   @override
   void initState() {
     super.initState();
+    _initializeFirebase();
     _initializePlayer();
     _initializeWebView();
     _hideControlsAfterDelay();
+    // 修改：無論是手機版還是TV版都載入推薦影片
+    _loadRecommendedVideos();
+  }
+
+  void _initializeFirebase() {
+    _dbRef = FirebaseDatabase.instance.ref('videos');
+    _animeDbRef = FirebaseDatabase.instance.ref('anime_videos');
   }
 
   void _initializeWebView() {
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted);
+  }
+
+  Future<void> _loadRecommendedVideos() async {
+    setState(() {
+      _isLoadingRecommendations = true;
+    });
+
+    try {
+      if (widget.isAnime) {
+        // 動畫影片：載入隨機推薦
+        await _loadRandomAnimeRecommendations();
+      } else {
+        // 真人影片：載入女優作品推薦
+        await _loadActressRecommendations();
+      }
+    } catch (e) {
+      print('載入推薦影片失敗: $e');
+      setState(() {
+        _isLoadingRecommendations = false;
+      });
+    }
+  }
+
+  // 載入女優作品推薦
+  Future<void> _loadActressRecommendations() async {
+    try {
+      // 從當前影片URL獲取女優資訊
+      final actressVideos = await _getActressVideos(widget.url);
+
+      if (actressVideos.isNotEmpty) {
+        setState(() {
+          _recommendedVideos = actressVideos;
+          _isLoadingRecommendations = false;
+        });
+      } else {
+        // 如果沒有女優作品，回退到隨機推薦
+        await _loadRandomRealRecommendations();
+      }
+    } catch (e) {
+      print('載入女優作品推薦失敗: $e');
+      // 回退到隨機推薦
+      await _loadRandomRealRecommendations();
+    }
+  }
+
+  // 從當前影片URL獲取女優作品列表
+  Future<List<Map<String, dynamic>>> _getActressVideos(
+      String currentVideoUrl) async {
+    try {
+      // 首先需要從當前播放的影片標題或URL找到對應的詳細頁面URL
+      String? detailUrl = await _findVideoDetailUrl(widget.title);
+
+      if (detailUrl == null) {
+        print('找不到影片詳細頁面URL');
+        return [];
+      }
+
+      print('找到影片詳細頁面: $detailUrl');
+
+      // 載入影片詳細頁面
+      await _webViewController.loadRequest(Uri.parse(detailUrl));
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 提取女優連結
+      final actressUrl = await _extractActressUrl();
+      if (actressUrl == null) {
+        print('無法找到女優連結');
+        return [];
+      }
+
+      print('找到女優頁面: $actressUrl');
+
+      // 載入女優作品列表頁面
+      await _webViewController.loadRequest(Uri.parse(actressUrl));
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 提取女優作品列表
+      final actressVideos = await _extractActressVideos();
+      return actressVideos;
+    } catch (e) {
+      print('獲取女優作品失敗: $e');
+      return [];
+    }
+  }
+
+  // 從Firebase中找到對應的影片詳細頁面URL
+  Future<String?> _findVideoDetailUrl(String title) async {
+    try {
+      final realSnapshot = await _dbRef.get();
+      if (realSnapshot.exists) {
+        final data = realSnapshot.value;
+        List<Map<String, dynamic>> videos = [];
+
+        if (data is List) {
+          videos = data
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList();
+        } else if (data is Map) {
+          videos = (data)
+              .values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+
+        // 尋找匹配的影片
+        for (final video in videos) {
+          if (video['title'] == title) {
+            return video['detail_url'];
+          }
+        }
+      }
+    } catch (e) {
+      print('查找影片詳細URL失敗: $e');
+    }
+    return null;
+  }
+
+  // 提取女優連結
+  Future<String?> _extractActressUrl() async {
+    try {
+      final result = await _webViewController.runJavaScriptReturningResult('''
+        (function() {
+          console.log('開始搜尋女優連結...');
+          
+          // 使用提供的XPath路徑：//*[@id="site-content"]/div/div/div[1]/section[2]/div[1]/div[1]/h6/div/a
+          const xpath = '//*[@id="site-content"]/div/div/div[1]/section[2]/div[1]/div[1]/h6/div/a';
+          const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          const actressLink = result.singleNodeValue;
+          
+          if (actressLink && actressLink.href) {
+            console.log('找到女優連結:', actressLink.href);
+            return JSON.stringify({ success: true, url: actressLink.href });
+          }
+          
+          // 備用方法：搜尋 models/ 連結
+          const modelLinks = Array.from(document.querySelectorAll('a[href*="/models/"]'));
+          if (modelLinks.length > 0) {
+            const url = modelLinks[0].href;
+            console.log('找到備用女優連結:', url);
+            return JSON.stringify({ success: true, url: url });
+          }
+          
+          console.log('沒有找到女優連結');
+          return JSON.stringify({ success: false });
+        })();
+      ''');
+
+      final data = jsonDecode(result.toString());
+      if (data['success'] == true) {
+        return data['url'];
+      }
+    } catch (e) {
+      print('提取女優連結失敗: $e');
+    }
+    return null;
+  }
+
+  // 提取女優作品列表
+  Future<List<Map<String, dynamic>>> _extractActressVideos() async {
+    try {
+      final result = await _webViewController.runJavaScriptReturningResult('''
+        (function() {
+          console.log('開始抓取女優作品列表...');
+          
+          // 搜尋影片元素
+          const videoElements = Array.from(document.querySelectorAll('.video-img-box'));
+          console.log('找到', videoElements.length, '個影片');
+          
+          const videos = [];
+          for (let i = 0; i < Math.min(videoElements.length, 20); i++) {
+            const element = videoElements[i];
+            const titleElement = element.querySelector('.detail .title a');
+            const imgElement = element.querySelector('img');
+            
+            if (titleElement) {
+              videos.push({
+                id: 'actress_' + Date.now() + '_' + i,
+                title: titleElement.innerText?.trim() || '未知標題',
+                detail_url: titleElement.href || '',
+                img_url: imgElement?.getAttribute('data-src') || imgElement?.getAttribute('src') || '',
+                source: 'actress_recommendation'
+              });
+            }
+          }
+          
+          console.log('成功抓取', videos.length, '個女優作品');
+          return JSON.stringify({ success: true, videos: videos });
+        })();
+      ''');
+
+      final data = jsonDecode(result.toString());
+      if (data['success'] == true) {
+        List<dynamic> videos = data['videos'];
+        return videos.map((v) => Map<String, dynamic>.from(v)).toList();
+      }
+    } catch (e) {
+      print('提取女優作品列表失敗: $e');
+    }
+    return [];
+  }
+
+  // 載入隨機真人影片推薦（回退方案）
+  Future<void> _loadRandomRealRecommendations() async {
+    try {
+      final realSnapshot = await _dbRef.get();
+      List<Map<String, dynamic>> allVideos = [];
+
+      if (realSnapshot.exists) {
+        final data = realSnapshot.value;
+        if (data is List) {
+          allVideos.addAll(data
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList());
+        } else if (data is Map) {
+          allVideos.addAll((data)
+              .values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList());
+        }
+      }
+
+      // 過濾掉目前播放的影片，隨機選取推薦影片
+      allVideos.removeWhere((video) => video['title'] == widget.title);
+      allVideos.shuffle();
+
+      setState(() {
+        _recommendedVideos = allVideos.take(20).toList();
+        _isLoadingRecommendations = false;
+      });
+    } catch (e) {
+      print('載入隨機真人影片推薦失敗: $e');
+      setState(() {
+        _isLoadingRecommendations = false;
+      });
+    }
+  }
+
+  // 載入隨機動畫推薦
+  Future<void> _loadRandomAnimeRecommendations() async {
+    try {
+      final animeSnapshot = await _animeDbRef.get();
+      List<Map<String, dynamic>> allVideos = [];
+
+      if (animeSnapshot.exists) {
+        final data = animeSnapshot.value;
+        if (data is List) {
+          allVideos.addAll(data
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList());
+        } else if (data is Map) {
+          allVideos.addAll((data)
+              .values
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList());
+        }
+      }
+
+      // 過濾掉目前播放的影片，隨機選取推薦影片
+      allVideos.removeWhere((video) => video['title'] == widget.title);
+      allVideos.shuffle();
+
+      setState(() {
+        _recommendedVideos = allVideos.take(20).toList();
+        _isLoadingRecommendations = false;
+      });
+    } catch (e) {
+      print('載入隨機動畫推薦失敗: $e');
+      setState(() {
+        _isLoadingRecommendations = false;
+      });
+    }
   }
 
   void _initializePlayer() async {
@@ -2300,12 +2602,33 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _showControlsTemporarily();
   }
 
-  void _startContinuousSeek(LogicalKeyboardKey key) {
+  void _seekBackward10() {
+    final newPosition =
+        _controller.value.position - const Duration(seconds: 10);
+    _controller
+        .seekTo(newPosition < Duration.zero ? Duration.zero : newPosition);
+    _showControlsTemporarily();
+  }
+
+  void _seekForward10() {
+    final newPosition =
+        _controller.value.position + const Duration(seconds: 10);
+    final duration = _controller.value.duration;
+    _controller.seekTo(newPosition > duration ? duration : newPosition);
+    _showControlsTemporarily();
+  }
+
+  void _startContinuousSeek(bool forward) {
+    _isLongPress = true;
     _continuousSeekTimer?.cancel();
     _continuousSeekTimer =
         Timer.periodic(const Duration(milliseconds: 200), (timer) {
-      if (mounted && _isLongPress && _keyDownTime.containsKey(key)) {
-        _executeSeek(key);
+      if (_isLongPress) {
+        if (forward) {
+          _seekForward10();
+        } else {
+          _seekBackward10();
+        }
       } else {
         timer.cancel();
       }
@@ -2314,105 +2637,589 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final isMobile = screenSize.shortestSide < 600;
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: () {
-          // 手機版：點擊畫面顯示/隱藏控制界面
-          if (_showControls) {
-            setState(() {
-              _showControls = false;
-            });
-            _hideControlsTimer?.cancel();
-          } else {
-            _showControlsTemporarily();
+      body: RawKeyboardListener(
+        focusNode: _playerFocusNode,
+        autofocus: true,
+        onKey: (RawKeyEvent event) {
+          if (event is RawKeyDownEvent) {
+            _keyDownTime[event.logicalKey] = DateTime.now();
+            if (event.logicalKey == LogicalKeyboardKey.escape ||
+                event.logicalKey == LogicalKeyboardKey.goBack) {
+              Navigator.pop(context);
+            } else if (event.logicalKey == LogicalKeyboardKey.space ||
+                event.logicalKey == LogicalKeyboardKey.select ||
+                event.logicalKey == LogicalKeyboardKey.enter) {
+              if (_initialized) {
+                if (_controller.value.isPlaying) {
+                  _controller.pause();
+                } else {
+                  _controller.play();
+                }
+                _showControlsTemporarily();
+              }
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+              if (!_isLongPress) {
+                _seekBackward10();
+              }
+              _startContinuousSeek(false);
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+              if (!_isLongPress) {
+                _seekForward10();
+              }
+              _startContinuousSeek(true);
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              // 增加播放速度
+              if (_playbackSpeed < 2.0) {
+                _playbackSpeed += 0.25;
+                _controller.setPlaybackSpeed(_playbackSpeed);
+                _showControlsTemporarily();
+              }
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              // 降低播放速度
+              if (_playbackSpeed > 0.25) {
+                _playbackSpeed -= 0.25;
+                _controller.setPlaybackSpeed(_playbackSpeed);
+                _showControlsTemporarily();
+              }
+            }
+          } else if (event is RawKeyUpEvent) {
+            _keyDownTime.remove(event.logicalKey);
+            _isLongPress = false;
           }
         },
-        child: RawKeyboardListener(
-          focusNode: _playerFocusNode,
-          autofocus: true,
-          onKey: (RawKeyEvent event) {
-            if (event is RawKeyDownEvent) {
-              _keyDownTime[event.logicalKey] = DateTime.now();
+        child: isMobile ? _buildMobilePlayer() : _buildTVLayoutPlayer(),
+      ),
+    );
+  }
 
-              if (event.logicalKey == LogicalKeyboardKey.space ||
-                  event.logicalKey == LogicalKeyboardKey.select ||
-                  event.logicalKey == LogicalKeyboardKey.enter) {
-                if (_initialized) {
-                  if (_controller.value.isPlaying) {
-                    _controller.pause();
-                  } else {
-                    _controller.play();
-                  }
-                  _showControlsTemporarily();
-                }
-              } else if (event.logicalKey == LogicalKeyboardKey.escape ||
-                  event.logicalKey == LogicalKeyboardKey.goBack) {
-                Navigator.pop(context);
-              } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
-                  event.logicalKey == LogicalKeyboardKey.arrowRight) {
-                _executeSeek(event.logicalKey);
+  // 檢測是否為手機裝置
+  bool _isMobile() {
+    final data = MediaQuery.of(context);
+    return data.size.shortestSide < 600;
+  }
 
-                // 檢查是否長按
-                _isLongPress = true;
-                Timer(const Duration(milliseconds: 500), () {
-                  if (_keyDownTime.containsKey(event.logicalKey)) {
-                    _startContinuousSeek(event.logicalKey);
-                  }
-                });
-              } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                // 增加播放速度
-                if (_playbackSpeed < 2.0) {
-                  _playbackSpeed += 0.25;
-                  _controller.setPlaybackSpeed(_playbackSpeed);
-                  _showControlsTemporarily();
-                }
-              } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                // 降低播放速度
-                if (_playbackSpeed > 0.25) {
-                  _playbackSpeed -= 0.25;
-                  _controller.setPlaybackSpeed(_playbackSpeed);
-                  _showControlsTemporarily();
-                }
+  // 手機版播放器（支援全螢幕和推薦模式）
+  Widget _buildMobilePlayer() {
+    return Column(
+      children: [
+        // 主要播放區域
+        Expanded(
+          flex: _isFullscreen ? 10 : 7,
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _showControls = !_showControls;
+              });
+              if (_showControls) {
+                _hideControlsAfterDelay();
               }
-            } else if (event is RawKeyUpEvent) {
-              _keyDownTime.remove(event.logicalKey);
-              _isLongPress = false;
-            }
-          },
-          child: Stack(
-            children: [
-              // 影片播放器
-              if (_initialized)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: _controller.value.aspectRatio,
-                    child: VideoPlayer(_controller),
+            },
+            child: Stack(
+              children: [
+                // 影片播放器
+                if (_initialized)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: _controller.value.aspectRatio,
+                      child: VideoPlayer(_controller),
+                    ),
+                  )
+                else if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  const Center(
+                    child: Text(
+                      '無法載入影片',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
                   ),
-                )
-              else if (_isLoading)
-                const Center(child: CircularProgressIndicator())
-              else
-                const Center(
-                  child: Text(
-                    '無法載入影片',
-                    style: TextStyle(color: Colors.white, fontSize: 18),
+
+                // 控制層
+                if (_showControls) _buildMobileControls(),
+              ],
+            ),
+          ),
+        ),
+
+        // 推薦影片區域（手機版）
+        if (!_isFullscreen)
+          Expanded(
+            flex: 3,
+            child: _buildMobileRecommendedVideos(),
+          ),
+      ],
+    );
+  }
+
+  // 手機版推薦影片區域
+  Widget _buildMobileRecommendedVideos() {
+    return Container(
+      color: Colors.black87,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 標題區域
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withOpacity(0.2)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.queue_play_next,
+                  color: widget.isAnime ? Colors.pink : Colors.blue,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.isAnime ? '推薦動畫' : '推薦影片',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-
-              // 控制層
-              if (_showControls) _buildControls(),
-
-              // 推薦影片列表 - 手機版在底部顯示
-              if (_showControls) _buildRecommendedVideosForMobile(),
-            ],
+                const Spacer(),
+                // 全螢幕按鈕
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isFullscreen = true;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Icon(
+                      Icons.fullscreen,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                  ),
+                ),
+                if (_isLoadingRecommendations) ...[
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: widget.isAnime ? Colors.pink : Colors.blue,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
+
+          // 推薦影片列表 - 手機版網格顯示
+          Expanded(
+            child: _isLoadingRecommendations
+                ? const Center(
+                    child: CircularProgressIndicator(),
+                  )
+                : _recommendedVideos.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.video_library_outlined,
+                              size: 32,
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '正在載入推薦影片...',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.all(8),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 1.4,
+                        ),
+                        itemCount: _recommendedVideos.length > 6
+                            ? 6
+                            : _recommendedVideos.length,
+                        itemBuilder: (context, index) {
+                          final video = _recommendedVideos[index];
+                          return _buildMobileRecommendedVideoCard(video);
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 手機版推薦影片卡片
+  Widget _buildMobileRecommendedVideoCard(Map<String, dynamic> video) {
+    final isAnimeVideo =
+        video['detail_url']?.toString().contains('hanime1.me') ?? false;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade900.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: InkWell(
+        onTap: () => _playRecommendedVideo(video),
+        borderRadius: BorderRadius.circular(6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 縮圖區域
+            Expanded(
+              flex: 2,
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(6)),
+                  color: Colors.grey.shade800,
+                ),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(6)),
+                      child: video['img_url']?.isNotEmpty == true
+                          ? Image.network(
+                              video['img_url'],
+                              width: double.infinity,
+                              height: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return _buildPlaceholderThumbnail(isAnimeVideo);
+                              },
+                            )
+                          : _buildPlaceholderThumbnail(isAnimeVideo),
+                    ),
+
+                    // 播放圖示覆蓋
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(6)),
+                          color: Colors.black.withOpacity(0.3),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // 類型標籤
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isAnimeVideo ? Colors.pink : Colors.blue,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          isAnimeVideo ? '動畫' : '真人',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // 標題區域
+            Expanded(
+              flex: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Text(
+                  video['title'] ?? '未知標題',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildControls() {
+  Widget _buildPlaceholderThumbnail(bool isAnime) {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.grey.shade800,
+            Colors.grey.shade900,
+          ],
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isAnime ? Icons.animation : Icons.video_library,
+              size: 24,
+              color: Colors.white.withOpacity(0.5),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isAnime ? '動畫' : '真人',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.5),
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _playRecommendedVideo(Map<String, dynamic> video) async {
+    try {
+      final detailUrl = video['detail_url'] as String?;
+      if (detailUrl == null || detailUrl.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('沒有找到影片詳細頁面')),
+        );
+        return;
+      }
+
+      // 顯示載入指示器
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      // 載入影片詳細頁面
+      await _webViewController.loadRequest(Uri.parse(detailUrl));
+      await Future.delayed(const Duration(seconds: 3));
+
+      String? playUrl;
+      bool isAnime = detailUrl.contains('hanime1.me');
+
+      // 根據影片類型使用對應的爬蟲提取播放網址
+      if (isAnime) {
+        // 使用 AnimeCrawler 邏輯提取播放網址
+        playUrl = await _extractAnimePlayUrl();
+      } else {
+        // 使用 RealCrawler 邏輯提取播放網址
+        playUrl = await _extractRealPlayUrl();
+      }
+
+      // 關閉載入指示器
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      if (playUrl != null && playUrl.isNotEmpty && mounted) {
+        final String finalPlayUrl = playUrl!; // 確保 playUrl 不是 null，使用非空斷言
+        // 導覽到新的播放器頁面
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerScreen(
+              title: video['title'] as String? ?? '未知標題',
+              url: finalPlayUrl,
+              isAnime: isAnime,
+            ),
+          ),
+        );
+      } else if (mounted) {
+        // 如果無法提取播放網址，詢問是否在外部瀏覽器開啟
+        showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Text('無法自動播放'),
+              content: const Text('無法自動提取播放地址。\n\n是否要在外部瀏覽器開啟頁面？'),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('取消'),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                TextButton(
+                  child: const Text('開啟瀏覽器'),
+                  onPressed: () async {
+                    Navigator.of(context).pop();
+                    final uri = Uri.parse(detailUrl);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // 關閉載入指示器
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('播放失敗: $e')),
+        );
+      }
+    }
+  }
+
+  Future<String?> _extractRealPlayUrl() async {
+    try {
+      final result = await _webViewController.runJavaScriptReturningResult('''
+        (function() {
+          console.log('開始搜尋播放地址...');
+          
+          // 方法1: 檢查全域變數 hlsUrl
+          if (typeof window.hlsUrl !== 'undefined') {
+            console.log('找到 hlsUrl:', window.hlsUrl);
+            return JSON.stringify({ success: true, url: window.hlsUrl, source: 'hlsUrl' });
+          }
+          
+          // 方法2: 搜尋 script 標籤中的 hlsUrl
+          const scripts = Array.from(document.scripts);
+          for (let script of scripts) {
+            const content = script.innerText || script.innerHTML || '';
+            const match = content.match(/var\\s+hlsUrl\\s*=\\s*['"]([^'"]+)['"]/);
+            if (match && match[1]) {
+              console.log('在 script 中找到 hlsUrl:', match[1]);
+              return JSON.stringify({ success: true, url: match[1], source: 'script' });
+            }
+          }
+          
+          // 方法3: 搜尋頁面中的 .m3u8 URL
+          const pageContent = document.documentElement.outerHTML;
+          const m3u8Match = pageContent.match(/https?:\\/\\/[^\\s"'<>]+\\.m3u8[^\\s"'<>]*/);
+          if (m3u8Match) {
+            console.log('在頁面中找到 m3u8:', m3u8Match[0]);
+            return JSON.stringify({ success: true, url: m3u8Match[0], source: 'page' });
+          }
+          
+          console.log('沒有找到播放地址');
+          return JSON.stringify({ success: false });
+        })();
+      ''');
+
+      final data = jsonDecode(result.toString());
+      if (data['success'] == true) {
+        return data['url'];
+      }
+    } catch (e) {
+      print('提取真人影片播放網址失敗: $e');
+    }
+    return null;
+  }
+
+  Future<String?> _extractAnimePlayUrl() async {
+    try {
+      final result = await _webViewController.runJavaScriptReturningResult('''
+        (function() {
+          console.log('開始搜尋動畫播放地址...');
+          
+          // 搜尋各種可能的播放網址
+          const pageContent = document.documentElement.outerHTML;
+          
+          // 方法1: 搜尋 .m3u8 URL
+          const m3u8Match = pageContent.match(/https?:\\/\\/[^\\s"'<>]+\\.m3u8[^\\s"'<>]*/);
+          if (m3u8Match) {
+            return JSON.stringify({ success: true, url: m3u8Match[0] });
+          }
+          
+          // 方法2: 搜尋 .mp4 URL
+          const mp4Match = pageContent.match(/https?:\\/\\/[^\\s"'<>]+\\.mp4[^\\s"'<>]*/);
+          if (mp4Match) {
+            return JSON.stringify({ success: true, url: mp4Match[0] });
+          }
+          
+          return JSON.stringify({ success: false });
+        })();
+      ''');
+
+      final data = jsonDecode(result.toString());
+      if (data['success'] == true) {
+        return data['url'];
+      }
+    } catch (e) {
+      print('提取動畫播放網址失敗: $e');
+    }
+    return null;
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+
+    if (hours > 0) {
+      return '$hours:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    } else {
+      return '${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideControlsTimer?.cancel();
+    _continuousSeekTimer?.cancel();
+    _controller.dispose();
+    _playerFocusNode.dispose();
+    super.dispose();
+  }
+
+  // 手機版控制按鈕
+  Widget _buildMobileControls() {
     if (!_initialized) return const SizedBox();
 
     return Container(
@@ -2436,10 +3243,292 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back,
-                        color: Colors.white, size: 28),
-                    onPressed: () => Navigator.pop(context),
+                  // 返回按鈕 - 更大的點擊區域
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // 全螢幕切換按鈕
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _isFullscreen = !_isFullscreen;
+                      });
+                      if (!_isFullscreen && _recommendedVideos.isEmpty) {
+                        _loadRecommendedVideos();
+                      }
+                      _showControlsTemporarily();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        _isFullscreen
+                            ? Icons.fullscreen_exit
+                            : Icons.fullscreen,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const Spacer(),
+
+          // 中央播放控制
+          Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 後退10秒按鈕
+                GestureDetector(
+                  onTap: () {
+                    final newPosition = _controller.value.position -
+                        const Duration(seconds: 10);
+                    _controller.seekTo(newPosition < Duration.zero
+                        ? Duration.zero
+                        : newPosition);
+                    _showControlsTemporarily();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.replay_10,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 32),
+
+                // 播放/暫停按鈕
+                GestureDetector(
+                  onTap: () {
+                    if (_controller.value.isPlaying) {
+                      _controller.pause();
+                    } else {
+                      _controller.play();
+                    }
+                    _showControlsTemporarily();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: (widget.isAnime ? Colors.pink : Colors.blue)
+                          .withOpacity(0.9),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _controller.value.isPlaying
+                          ? Icons.pause
+                          : Icons.play_arrow,
+                      color: Colors.white,
+                      size: 40,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(width: 32),
+
+                // 前進10秒按鈕
+                GestureDetector(
+                  onTap: () {
+                    final newPosition = _controller.value.position +
+                        const Duration(seconds: 10);
+                    final maxPosition = _controller.value.duration;
+                    _controller.seekTo(
+                        newPosition > maxPosition ? maxPosition : newPosition);
+                    _showControlsTemporarily();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.forward_10,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const Spacer(),
+
+          // 底部控制欄
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // 進度條
+                VideoProgressIndicator(
+                  _controller,
+                  allowScrubbing: true,
+                  colors: VideoProgressColors(
+                    playedColor: widget.isAnime ? Colors.pink : Colors.blue,
+                    bufferedColor: Colors.white.withOpacity(0.3),
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // 次要控制行
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // 播放速度控制
+                    GestureDetector(
+                      onTap: () {
+                        if (_playbackSpeed >= 2.0) {
+                          _playbackSpeed = 0.5;
+                        } else if (_playbackSpeed >= 1.5) {
+                          _playbackSpeed = 2.0;
+                        } else if (_playbackSpeed >= 1.25) {
+                          _playbackSpeed = 1.5;
+                        } else if (_playbackSpeed >= 1.0) {
+                          _playbackSpeed = 1.25;
+                        } else if (_playbackSpeed >= 0.75) {
+                          _playbackSpeed = 1.0;
+                        } else {
+                          _playbackSpeed = 0.75;
+                        }
+                        _controller.setPlaybackSpeed(_playbackSpeed);
+                        _showControlsTemporarily();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(20),
+                          border:
+                              Border.all(color: Colors.white.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.speed,
+                                color: Colors.white, size: 18),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${_playbackSpeed}x',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 時間顯示
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(20),
+                        border:
+                            Border.all(color: Colors.white.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        '${_formatDuration(_controller.value.position)} / ${_formatDuration(_controller.value.duration)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTVControls() {
+    if (!_initialized) return const SizedBox();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withOpacity(0.7),
+            Colors.transparent,
+            Colors.transparent,
+            Colors.black.withOpacity(0.7),
+          ],
+        ),
+      ),
+      child: Column(
+        children: [
+          // 頂部控制欄
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  // 返回按鈕 - 加大點擊區域
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -2498,11 +3587,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // 後退10秒按鈕
-                    IconButton(
-                      icon: const Icon(Icons.replay_10,
-                          color: Colors.white, size: 28),
-                      onPressed: () {
+                    // 後退10秒按鈕 - 加大點擊區域
+                    GestureDetector(
+                      onTap: () {
                         final newPosition = _controller.value.position -
                             const Duration(seconds: 10);
                         _controller.seekTo(newPosition < Duration.zero
@@ -2510,43 +3597,54 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             : newPosition);
                         _showControlsTemporarily();
                       },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.replay_10,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                      ),
                     ),
 
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 24),
 
-                    // 播放/暫停按鈕
-                    Container(
-                      decoration: BoxDecoration(
-                        color: (widget.isAnime ? Colors.pink : Colors.blue)
-                            .withOpacity(0.8),
-                        shape: BoxShape.circle,
-                      ),
-                      child: IconButton(
-                        icon: Icon(
+                    // 播放/暫停按鈕 - 加大點擊區域
+                    GestureDetector(
+                      onTap: () {
+                        if (_controller.value.isPlaying) {
+                          _controller.pause();
+                        } else {
+                          _controller.play();
+                        }
+                        _showControlsTemporarily();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: (widget.isAnime ? Colors.pink : Colors.blue)
+                              .withOpacity(0.8),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
                           _controller.value.isPlaying
                               ? Icons.pause
                               : Icons.play_arrow,
                           color: Colors.white,
-                          size: 40,
+                          size: 32,
                         ),
-                        onPressed: () {
-                          if (_controller.value.isPlaying) {
-                            _controller.pause();
-                          } else {
-                            _controller.play();
-                          }
-                          _showControlsTemporarily();
-                        },
                       ),
                     ),
 
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 24),
 
-                    // 前進10秒按鈕
-                    IconButton(
-                      icon: const Icon(Icons.forward_10,
-                          color: Colors.white, size: 28),
-                      onPressed: () {
+                    // 前進10秒按鈕 - 加大點擊區域
+                    GestureDetector(
+                      onTap: () {
                         final newPosition = _controller.value.position +
                             const Duration(seconds: 10);
                         final maxPosition = _controller.value.duration;
@@ -2555,17 +3653,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             : newPosition);
                         _showControlsTemporarily();
                       },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.forward_10,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                      ),
                     ),
                   ],
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // 次要控制行
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // 播放速度控制
+                    // 播放速度控制 - 加大點擊區域
                     GestureDetector(
                       onTap: () {
                         // 循環播放速度：0.5x -> 0.75x -> 1x -> 1.25x -> 1.5x -> 2x -> 0.5x
@@ -2587,7 +3697,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
+                            horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.black.withOpacity(0.6),
                           borderRadius: BorderRadius.circular(16),
@@ -2616,7 +3726,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                     // 時間顯示
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
+                          horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.6),
                         borderRadius: BorderRadius.circular(16),
@@ -2632,22 +3742,29 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       ),
                     ),
 
-                    // 全螢幕按鈕
-                    IconButton(
-                      icon: Icon(
-                        _isFullscreen
-                            ? Icons.fullscreen_exit
-                            : Icons.fullscreen,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                      onPressed: () {
+                    // 全螢幕按鈕 - 加大點擊區域
+                    GestureDetector(
+                      onTap: () {
                         setState(() {
                           _isFullscreen = !_isFullscreen;
                         });
                         _showControlsTemporarily();
                         // 這裡可以添加實際的全螢幕切換邏輯
                       },
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _isFullscreen
+                              ? Icons.fullscreen_exit
+                              : Icons.fullscreen,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -2659,242 +3776,135 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     );
   }
 
-  Widget _buildRecommendedVideos() {
-    return Positioned(
-      right: 16,
-      top: 100,
-      bottom: 100,
-      width: 300,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.2)),
-        ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                '推薦影片',
-                style: TextStyle(
+  Widget _buildTVRecommendedVideos() {
+    return Container(
+      color: Colors.black87,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 標題區域
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withOpacity(0.2)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.queue_play_next,
                   color: widget.isAnime ? Colors.pink : Colors.blue,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  size: 20,
                 ),
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.isAnime ? '推薦動畫' : '推薦影片',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                // 關閉推薦區域按鈕
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _isFullscreen = true;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.fullscreen,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
+                ),
+                if (_isLoadingRecommendations) ...[
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: widget.isAnime ? Colors.pink : Colors.blue,
+                    ),
+                  ),
+                ],
+              ],
             ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _recommendedVideos.length,
-                itemBuilder: (context, index) {
-                  final video = _recommendedVideos[index];
-                  return _buildRecommendedVideoItem(video);
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+
+          // 推薦影片列表 - TV版YouTube風格橫向滾動
+          Expanded(
+            child: _isLoadingRecommendations
+                ? const Center(
+                    child: CircularProgressIndicator(),
+                  )
+                : _recommendedVideos.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.video_library_outlined,
+                              size: 48,
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              '正在載入推薦影片...',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        itemCount: _recommendedVideos.length,
+                        itemBuilder: (context, index) {
+                          final video = _recommendedVideos[index];
+                          return _buildTVRecommendedVideoCard(video, index);
+                        },
+                      ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildRecommendedVideoItem(Map<String, dynamic> video) {
+  // TV版推薦影片卡片 - 橫向滾動風格
+  Widget _buildTVRecommendedVideoCard(Map<String, dynamic> video, int index) {
+    final isAnimeVideo =
+        video['detail_url']?.toString().contains('hanime1.me') ?? false;
+
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      width: 200,
+      margin: const EdgeInsets.only(right: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
+        color: Colors.grey.shade900.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
       ),
       child: InkWell(
         onTap: () => _playRecommendedVideo(video),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              // 縮圖
-              Container(
-                width: 80,
-                height: 60,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.grey.shade800,
-                ),
-                child: video['img_url']?.isNotEmpty == true
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.network(
-                          video['img_url'],
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return const Icon(
-                              Icons.video_library,
-                              color: Colors.white54,
-                              size: 24,
-                            );
-                          },
-                        ),
-                      )
-                    : const Icon(
-                        Icons.video_library,
-                        color: Colors.white54,
-                        size: 24,
-                      ),
-              ),
-              const SizedBox(width: 12),
-
-              // 標題
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      video['title'] ?? '未知標題',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'ID: ${video['id'] ?? 'N/A'}',
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _playRecommendedVideo(Map<String, dynamic> video) {
-    // 實現推薦影片播放邏輯
-    print('播放推薦影片: ${video['title']}');
-  }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final seconds = duration.inSeconds.remainder(60);
-
-    if (hours > 0) {
-      return '$hours:${twoDigits(minutes)}:${twoDigits(seconds)}';
-    } else {
-      return '${twoDigits(minutes)}:${twoDigits(seconds)}';
-    }
-  }
-
-  @override
-  void dispose() {
-    _hideControlsTimer?.cancel();
-    _continuousSeekTimer?.cancel();
-    _controller.dispose();
-    _playerFocusNode.dispose();
-    super.dispose();
-  }
-
-  // 手機版推薦影片列表 - 底部橫向滾動
-  Widget _buildRecommendedVideosForMobile() {
-    // 如果沒有推薦影片，顯示示例數據
-    if (_recommendedVideos.isEmpty) {
-      _recommendedVideos = [
-        {
-          'id': 'rec001',
-          'title': '推薦影片 1',
-          'img_url': '',
-          'detail_url': '',
-        },
-        {
-          'id': 'rec002',
-          'title': '推薦影片 2',
-          'img_url': '',
-          'detail_url': '',
-        },
-        {
-          'id': 'rec003',
-          'title': '推薦影片 3',
-          'img_url': '',
-          'detail_url': '',
-        },
-      ];
-    }
-
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 120, // 在控制欄上方
-      height: 120,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Colors.transparent,
-              Colors.black.withOpacity(0.3),
-              Colors.black.withOpacity(0.6),
-            ],
-          ),
-        ),
+        borderRadius: BorderRadius.circular(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 16, bottom: 8),
-              child: Text(
-                '推薦影片',
-                style: TextStyle(
-                  color: widget.isAnime ? Colors.pink : Colors.blue,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                itemCount: _recommendedVideos.length,
-                itemBuilder: (context, index) {
-                  final video = _recommendedVideos[index];
-                  return _buildMobileRecommendedVideoItem(video);
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 手機版推薦影片項目
-  Widget _buildMobileRecommendedVideoItem(Map<String, dynamic> video) {
-    return Container(
-      width: 140,
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-      ),
-      child: InkWell(
-        onTap: () => _playRecommendedVideo(video),
-        borderRadius: BorderRadius.circular(8),
-        child: Column(
-          children: [
-            // 縮圖
+            // 縮圖區域
             Expanded(
               flex: 3,
               child: Container(
@@ -2904,55 +3914,156 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       const BorderRadius.vertical(top: Radius.circular(8)),
                   color: Colors.grey.shade800,
                 ),
-                child: video['img_url']?.isNotEmpty == true
-                    ? ClipRRect(
-                        borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(8)),
-                        child: Image.network(
-                          video['img_url'],
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return const Center(
-                              child: Icon(
-                                Icons.video_library,
-                                color: Colors.white54,
-                                size: 32,
-                              ),
-                            );
-                          },
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(8)),
+                      child: video['img_url']?.isNotEmpty == true
+                          ? Image.network(
+                              video['img_url'],
+                              width: double.infinity,
+                              height: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) {
+                                return _buildPlaceholderThumbnail(isAnimeVideo);
+                              },
+                            )
+                          : _buildPlaceholderThumbnail(isAnimeVideo),
+                    ),
+
+                    // 播放圖示覆蓋
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(8)),
+                          color: Colors.black.withOpacity(0.3),
                         ),
-                      )
-                    : const Center(
-                        child: Icon(
-                          Icons.video_library,
-                          color: Colors.white54,
-                          size: 32,
+                        child: const Center(
+                          child: Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: 32,
+                          ),
                         ),
                       ),
+                    ),
+
+                    // 類型標籤
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isAnimeVideo ? Colors.pink : Colors.blue,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          isAnimeVideo ? '動畫' : '真人',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
 
-            // 標題
+            // 標題區域
             Expanded(
               flex: 1,
               child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Text(
-                  video['title'] ?? '未知標題',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        video['title'] ?? '未知標題',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'ID: ${video['id'] ?? 'N/A'}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.6),
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  // TV版佈局播放器（保持原有的上下分割）
+  Widget _buildTVLayoutPlayer() {
+    return Column(
+      children: [
+        // 主要播放區域 - TV版YouTube風格，上方播放器
+        Expanded(
+          flex: _isFullscreen ? 10 : 7,
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _showControls = !_showControls;
+              });
+              if (_showControls) {
+                _hideControlsAfterDelay();
+              }
+            },
+            child: Stack(
+              children: [
+                // 影片播放器
+                if (_initialized)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: _controller.value.aspectRatio,
+                      child: VideoPlayer(_controller),
+                    ),
+                  )
+                else if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  const Center(
+                    child: Text(
+                      '無法載入影片',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  ),
+
+                // 控制層
+                if (_showControls) _buildTVControls(),
+              ],
+            ),
+          ),
+        ),
+
+        // 推薦影片區域 - TV版YouTube風格，下方推薦
+        if (!_isFullscreen)
+          Expanded(
+            flex: 3,
+            child: _buildTVRecommendedVideos(),
+          ),
+      ],
     );
   }
 }
