@@ -20,10 +20,26 @@ dependencies:
   url_launcher: ^6.3.1
   dio: ^5.8.0+1
   open_file: ^3.5.10
+  external_path: ^2.2.0
+  permission_handler: ^12.0.0+1
+  device_info_plus: ^11.4.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/foreground.png"
+  adaptive_icon_background: "assets/icon/background.png"
+  adaptive_icon_foreground: "assets/icon/foreground.png"
+  android_tv:
+    image_path: "assets/icon/foreground.png"
+    adaptive_icon_background: "assets/icon/background.png"
+    adaptive_icon_foreground: "assets/icon/foreground.png"
+    remove_alpha_ios: true
