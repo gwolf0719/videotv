@@ -35,10 +35,10 @@ class AnimeCrawler {
     onStatusChange('正在載入動畫網站第 $currentPage 頁...');
 
     try {
-      await webViewController.loadRequest(
-        Uri.parse(
-            'https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&page=$currentPage'),
-      );
+      final url = 'https://hanime1.me/search?genre=裏番&page=$currentPage';
+      print('🔄 載入動畫頁面: $url');
+
+      await webViewController.loadRequest(Uri.parse(url));
       // 等待頁面載入完成
       await Future.delayed(const Duration(seconds: 5));
       await extractVideoData();
@@ -519,11 +519,30 @@ class AnimeCrawler {
         return data['url'];
       } else {
         print("❌ 未找到播放地址: ${data['error']}");
-        // 如果沒找到，嘗試返回測試URL
-        return await _generateTestUrl();
+        // 嘗試等待更長時間再重試一次
+        await Future.delayed(const Duration(seconds: 3));
+        return await _retryExtractPlayUrl();
       }
     } catch (e) {
       print("❌ 提取播放地址時發生錯誤: $e");
+      return await _retryExtractPlayUrl();
+    }
+  }
+
+  // 重試提取播放地址
+  Future<String?> _retryExtractPlayUrl() async {
+    try {
+      print("🔄 重試提取播放地址...");
+      await Future.delayed(const Duration(seconds: 2));
+
+      // 嘗試重新載入頁面並提取
+      await webViewController.reload();
+      await Future.delayed(const Duration(seconds: 5));
+
+      // 再次嘗試提取
+      return await extractPlayUrl();
+    } catch (e) {
+      print("❌ 重試失敗: $e");
       return await _generateTestUrl();
     }
   }

@@ -168,33 +168,104 @@ class RealCrawler {
 
   Future<String?> extractPlayUrl() async {
     try {
+      // 增加等待時間，確保頁面完全載入
+      await Future.delayed(const Duration(seconds: 5));
+
       final result = await webViewController.runJavaScriptReturningResult('''
         (function() {
           console.log('開始搜尋播放地址...');
           
           // 方法1: 檢查全域變數 hlsUrl
-          if (typeof window.hlsUrl !== 'undefined') {
+          if (typeof window.hlsUrl !== 'undefined' && window.hlsUrl) {
             console.log('找到 hlsUrl:', window.hlsUrl);
             return JSON.stringify({ success: true, url: window.hlsUrl, source: 'hlsUrl' });
           }
           
-          // 方法2: 搜尋 script 標籤中的 hlsUrl
-          const scripts = Array.from(document.scripts);
-          for (let script of scripts) {
-            const content = script.innerText || script.innerHTML || '';
-            const match = content.match(/var\\s+hlsUrl\\s*=\\s*['"]([^'"]+)['"]/);
-            if (match && match[1]) {
-              console.log('在 script 中找到 hlsUrl:', match[1]);
-              return JSON.stringify({ success: true, url: match[1], source: 'script' });
+          // 方法2: 檢查其他常見的全域變數
+          const globalVars = [
+            'videoUrl', 'playUrl', 'streamUrl', 'mp4Url', 'video_url', 'play_url',
+            'sourceUrl', 'mediaUrl', 'videoSrc', 'src', 'videoSource'
+          ];
+          for (let varName of globalVars) {
+            if (typeof window[varName] !== 'undefined' && window[varName]) {
+              console.log('找到全域變數', varName + ':', window[varName]);
+              return JSON.stringify({ success: true, url: window[varName], source: varName });
             }
           }
           
-          // 方法3: 搜尋頁面中的 .m3u8 URL
+          // 方法3: 搜尋 script 標籤中的播放地址 (增強版)
+          const scripts = Array.from(document.scripts);
+          for (let script of scripts) {
+            const content = script.innerText || script.innerHTML || '';
+            
+            // 搜尋更多可能的模式
+            const patterns = [
+              /var\\s+hlsUrl\\s*=\\s*['"]([^'"]+)['"]/,
+              /var\\s+videoUrl\\s*=\\s*['"]([^'"]+)['"]/,
+              /var\\s+playUrl\\s*=\\s*['"]([^'"]+)['"]/,
+              /"videoUrl"\\s*:\\s*"([^"]+)"/,
+              /"playUrl"\\s*:\\s*"([^"]+)"/,
+              /"src"\\s*:\\s*"([^"]+)"/,
+              /source\\s*:\\s*['"]([^'"]+)['"]/,
+              /src\\s*:\\s*['"]([^'"]+)['"]/,
+              /'videoUrl'\\s*:\\s*'([^']+)'/,
+              /'playUrl'\\s*:\\s*'([^']+)'/
+            ];
+            
+            for (let pattern of patterns) {
+              const match = content.match(pattern);
+              if (match && match[1] && match[1].includes('http')) {
+                console.log('在 script 中找到播放地址:', match[1]);
+                return JSON.stringify({ success: true, url: match[1], source: 'script-pattern' });
+              }
+            }
+          }
+          
+          // 方法4: 檢查所有 video 標籤
+          const videos = document.querySelectorAll('video');
+          for (let video of videos) {
+            if (video.src && video.src.startsWith('http')) {
+              console.log('在 video 標籤中找到 src:', video.src);
+              return JSON.stringify({ success: true, url: video.src, source: 'video-tag' });
+            }
+            
+            // 檢查 source 子標籤
+            const sources = video.querySelectorAll('source');
+            for (let source of sources) {
+              if (source.src && source.src.startsWith('http')) {
+                console.log('在 source 標籤中找到 src:', source.src);
+                return JSON.stringify({ success: true, url: source.src, source: 'source-tag' });
+              }
+            }
+          }
+          
+          // 方法5: 搜尋頁面中的各種影片格式 URL (增強版)
           const pageContent = document.documentElement.outerHTML;
-          const m3u8Match = pageContent.match(/https?:\\/\\/[^\\s"'<>]+\\.m3u8[^\\s"'<>]*/);
-          if (m3u8Match) {
-            console.log('在頁面中找到 m3u8:', m3u8Match[0]);
-            return JSON.stringify({ success: true, url: m3u8Match[0], source: 'page' });
+          const urlPatterns = [
+            /https?:\\/\\/[^\\s"'<>]+\\.m3u8[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]+\\.mp4[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]+\\.webm[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]+\\.mkv[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]+\\.avi[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]*\\/stream[^\\s"'<>]*/,
+            /https?:\\/\\/[^\\s"'<>]*\\/video[^\\s"'<>]*/
+          ];
+          
+          for (let pattern of urlPatterns) {
+            const match = pageContent.match(pattern);
+            if (match) {
+              console.log('在頁面中找到影片URL:', match[0]);
+              return JSON.stringify({ success: true, url: match[0], source: 'page-regex' });
+            }
+          }
+          
+          // 方法6: 檢查 iframe 中的內容
+          const iframes = document.querySelectorAll('iframe');
+          for (let iframe of iframes) {
+            if (iframe.src && (iframe.src.includes('player') || iframe.src.includes('embed'))) {
+              console.log('找到播放器 iframe:', iframe.src);
+              return JSON.stringify({ success: true, url: iframe.src, source: 'iframe' });
+            }
           }
           
           console.log('沒有找到播放地址');
@@ -214,11 +285,64 @@ class RealCrawler {
         return data['url'];
       } else {
         print("❌ 未找到播放地址: ${data['error']}");
-        return null;
+        // 嘗試等待更長時間再重試一次
+        await Future.delayed(const Duration(seconds: 3));
+        return await _retryExtractPlayUrl();
       }
     } catch (e) {
       print("❌ 提取播放地址時發生錯誤: $e");
-      return null;
+      return await _retryExtractPlayUrl();
     }
+  }
+
+  // 新增重試方法
+  Future<String?> _retryExtractPlayUrl() async {
+    try {
+      print("🔄 重試提取播放地址...");
+      final result = await webViewController.runJavaScriptReturningResult('''
+        (function() {
+          // 更積極的搜尋方法
+          const allElements = document.querySelectorAll('*');
+          
+          for (let element of allElements) {
+            // 搜尋所有包含 'src' 屬性的元素
+            const src = element.getAttribute('src');
+            if (src && (src.includes('.m3u8') || src.includes('.mp4') || src.includes('stream'))) {
+              if (src.startsWith('http')) {
+                console.log('在元素屬性中找到播放地址:', src);
+                return JSON.stringify({ success: true, url: src, source: 'element-src' });
+              }
+            }
+            
+            // 搜尋所有包含 'data-src' 屬性的元素
+            const dataSrc = element.getAttribute('data-src');
+            if (dataSrc && (dataSrc.includes('.m3u8') || dataSrc.includes('.mp4'))) {
+              if (dataSrc.startsWith('http')) {
+                console.log('在 data-src 中找到播放地址:', dataSrc);
+                return JSON.stringify({ success: true, url: dataSrc, source: 'data-src' });
+              }
+            }
+          }
+          
+          return JSON.stringify({ success: false, error: '重試後仍未找到播放地址' });
+        })();
+      ''');
+
+      String resultString = result.toString();
+      dynamic data = jsonDecode(resultString);
+
+      if (data is String) {
+        data = jsonDecode(data);
+      }
+
+      if (data['success'] == true) {
+        print("✅ 重試成功找到播放地址: ${data['url']} (來源: ${data['source']})");
+        return data['url'];
+      }
+    } catch (e) {
+      print("❌ 重試提取播放地址時發生錯誤: $e");
+    }
+
+    return null;
   }
 }
