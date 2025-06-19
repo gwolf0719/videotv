@@ -109,11 +109,31 @@ class RealCrawler {
         })();
       ''');
 
+      // 修復 JSON 解析問題
       String resultString = result.toString();
-      dynamic data = jsonDecode(resultString);
+      
+      print('🔍 JavaScript返回結果: $resultString');
+      print('🔍 結果類型: ${result.runtimeType}');
+      
+      // 移除多餘的引號並解碼轉義字符
+      if (resultString.startsWith('"') && resultString.endsWith('"')) {
+        resultString = resultString.substring(1, resultString.length - 1);
+        resultString = resultString.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+      }
 
-      if (data is String) {
-        data = jsonDecode(data);
+      dynamic data;
+      try {
+        data = jsonDecode(resultString);
+      } catch (e) {
+        print('❌ JSON解析失敗: $e');
+        print('🐛 原始結果: $resultString');
+        
+        // 嘗試直接使用結果（如果它已經是 Map）
+        if (result is Map) {
+          data = result;
+        } else {
+          throw Exception('無法解析 JavaScript 返回的資料');
+        }
       }
 
       if (data['success'] == true) {
@@ -198,151 +218,155 @@ class RealCrawler {
           for (let script of scripts) {
             const content = script.innerText || script.innerHTML || '';
             
-            // 搜尋更多可能的模式
-            const patterns = [
-              /var\\s+hlsUrl\\s*=\\s*['"]([^'"]+)['"]/,
-              /var\\s+videoUrl\\s*=\\s*['"]([^'"]+)['"]/,
-              /var\\s+playUrl\\s*=\\s*['"]([^'"]+)['"]/,
-              /"videoUrl"\\s*:\\s*"([^"]+)"/,
-              /"playUrl"\\s*:\\s*"([^"]+)"/,
-              /"src"\\s*:\\s*"([^"]+)"/,
-              /source\\s*:\\s*['"]([^'"]+)['"]/,
-              /src\\s*:\\s*['"]([^'"]+)['"]/,
-              /'videoUrl'\\s*:\\s*'([^']+)'/,
-              /'playUrl'\\s*:\\s*'([^']+)'/
-            ];
-            
-            for (let pattern of patterns) {
-              const match = content.match(pattern);
-              if (match && match[1] && match[1].includes('http')) {
-                console.log('在 script 中找到播放地址:', match[1]);
-                return JSON.stringify({ success: true, url: match[1], source: 'script-pattern' });
-              }
-            }
-          }
-          
-          // 方法4: 檢查所有 video 標籤
-          const videos = document.querySelectorAll('video');
-          for (let video of videos) {
-            if (video.src && video.src.startsWith('http')) {
-              console.log('在 video 標籤中找到 src:', video.src);
-              return JSON.stringify({ success: true, url: video.src, source: 'video-tag' });
+            // 搜尋 m3u8 檔案
+            const m3u8Match = content.match(/https?:\\/\\/[^\\s"']+\\.m3u8[^\\s"']*/);
+            if (m3u8Match) {
+              console.log('在 script 中找到 m3u8:', m3u8Match[0]);
+              return JSON.stringify({ success: true, url: m3u8Match[0], source: 'script_m3u8' });
             }
             
-            // 檢查 source 子標籤
-            const sources = video.querySelectorAll('source');
-            for (let source of sources) {
-              if (source.src && source.src.startsWith('http')) {
-                console.log('在 source 標籤中找到 src:', source.src);
-                return JSON.stringify({ success: true, url: source.src, source: 'source-tag' });
-              }
+            // 搜尋 mp4 檔案
+            const mp4Match = content.match(/https?:\\/\\/[^\\s"']+\\.mp4[^\\s"']*/);
+            if (mp4Match) {
+              console.log('在 script 中找到 mp4:', mp4Match[0]);
+              return JSON.stringify({ success: true, url: mp4Match[0], source: 'script_mp4' });
             }
           }
           
-          // 方法5: 搜尋頁面中的各種影片格式 URL (增強版)
-          const pageContent = document.documentElement.outerHTML;
-          const urlPatterns = [
-            /https?:\\/\\/[^\\s"'<>]+\\.m3u8[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]+\\.mp4[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]+\\.webm[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]+\\.mkv[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]+\\.avi[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]*\\/stream[^\\s"'<>]*/,
-            /https?:\\/\\/[^\\s"'<>]*\\/video[^\\s"'<>]*/
-          ];
-          
-          for (let pattern of urlPatterns) {
-            const match = pageContent.match(pattern);
-            if (match) {
-              console.log('在頁面中找到影片URL:', match[0]);
-              return JSON.stringify({ success: true, url: match[0], source: 'page-regex' });
-            }
-          }
-          
-          // 方法6: 檢查 iframe 中的內容
-          const iframes = document.querySelectorAll('iframe');
-          for (let iframe of iframes) {
-            if (iframe.src && (iframe.src.includes('player') || iframe.src.includes('embed'))) {
-              console.log('找到播放器 iframe:', iframe.src);
-              return JSON.stringify({ success: true, url: iframe.src, source: 'iframe' });
-            }
-          }
-          
-          console.log('沒有找到播放地址');
-          return JSON.stringify({ success: false, error: '沒有找到播放地址' });
+          console.log('未找到播放地址');
+          return JSON.stringify({ success: false, error: '未找到播放地址' });
         })();
       ''');
 
+      // 修復 JSON 解析問題
       String resultString = result.toString();
-      dynamic data = jsonDecode(resultString);
+      
+      print('🔍 播放地址搜尋結果: $resultString');
+      
+      // 移除多餘的引號並解碼轉義字符
+      if (resultString.startsWith('"') && resultString.endsWith('"')) {
+        resultString = resultString.substring(1, resultString.length - 1);
+        resultString = resultString.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+      }
 
-      if (data is String) {
-        data = jsonDecode(data);
+      dynamic data;
+      try {
+        data = jsonDecode(resultString);
+      } catch (e) {
+        print('❌ JSON解析失敗: $e');
+        print('🐛 原始結果: $resultString');
+        return null;
       }
 
       if (data['success'] == true) {
-        print("✅ 找到播放地址: ${data['url']} (來源: ${data['source']})");
         return data['url'];
       } else {
-        print("❌ 未找到播放地址: ${data['error']}");
-        // 嘗試等待更長時間再重試一次
-        await Future.delayed(const Duration(seconds: 3));
-        return await _retryExtractPlayUrl();
+        print('❌ 無法找到播放地址: ${data['error'] ?? '未知錯誤'}');
+        return null;
       }
     } catch (e) {
-      print("❌ 提取播放地址時發生錯誤: $e");
-      return await _retryExtractPlayUrl();
+      print('❌ 提取播放地址錯誤: $e');
+      return null;
     }
   }
 
-  // 新增重試方法
-  Future<String?> _retryExtractPlayUrl() async {
+  Future<Map<String, String>?> extractActressInfo() async {
     try {
-      print("🔄 重試提取播放地址...");
+      onStatusChange('🔍 正在尋找女優連結...');
+      
       final result = await webViewController.runJavaScriptReturningResult('''
         (function() {
-          // 更積極的搜尋方法
-          const allElements = document.querySelectorAll('*');
+          console.log('🔍 開始搜尋女優連結...');
           
-          for (let element of allElements) {
-            // 搜尋所有包含 'src' 屬性的元素
-            const src = element.getAttribute('src');
-            if (src && (src.includes('.m3u8') || src.includes('.mp4') || src.includes('stream'))) {
-              if (src.startsWith('http')) {
-                console.log('在元素屬性中找到播放地址:', src);
-                return JSON.stringify({ success: true, url: src, source: 'element-src' });
-              }
-            }
-            
-            // 搜尋所有包含 'data-src' 屬性的元素
-            const dataSrc = element.getAttribute('data-src');
-            if (dataSrc && (dataSrc.includes('.m3u8') || dataSrc.includes('.mp4'))) {
-              if (dataSrc.startsWith('http')) {
-                console.log('在 data-src 中找到播放地址:', dataSrc);
-                return JSON.stringify({ success: true, url: dataSrc, source: 'data-src' });
-              }
+          // 方法1: 使用 XPath
+          function getElementByXPath(xpath) {
+            return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          }
+          
+          const xpath = '/html/body/div[3]/div/div/div[1]/section[2]/div[1]/div[1]/h6/div/a';
+          console.log('📍 使用XPath:', xpath);
+          
+          let actressElement = getElementByXPath(xpath);
+          
+          if (actressElement && actressElement.href) {
+            console.log('✅ 找到女優連結 (XPath):', actressElement.href);
+            console.log('🎭 女優名稱:', actressElement.innerText?.trim());
+            return JSON.stringify({
+              success: true,
+              url: actressElement.href,
+              name: actressElement.innerText?.trim() || '未知女優',
+              method: 'xpath'
+            });
+          }
+          
+          console.log('🔄 XPath方法失敗，嘗試CSS選擇器...');
+          
+          // 方法2: CSS 選擇器
+          const selectors = [
+            'section[2] .col-12 h6 div a',
+            '.video-meta a[href*="models"]',
+            'a[href*="/models/"]',
+            '.actress-link'
+          ];
+          
+          for (let selector of selectors) {
+            actressElement = document.querySelector(selector);
+            if (actressElement && actressElement.href) {
+              console.log('✅ 找到女優連結 (CSS):', actressElement.href);
+              console.log('🎭 女優名稱:', actressElement.innerText?.trim());
+              return JSON.stringify({
+                success: true,
+                url: actressElement.href,
+                name: actressElement.innerText?.trim() || '未知女優',
+                method: 'css'
+              });
             }
           }
           
-          return JSON.stringify({ success: false, error: '重試後仍未找到播放地址' });
+          console.log('❌ 未找到女優連結');
+          return JSON.stringify({ success: false, error: '未找到女優連結' });
         })();
       ''');
 
+      // 修復 JSON 解析問題
       String resultString = result.toString();
-      dynamic data = jsonDecode(resultString);
+      
+      print('🔍 JavaScript返回結果: $resultString');
+      print('🔍 結果類型: ${result.runtimeType}');
+      
+      // 移除多餘的引號並解碼轉義字符
+      if (resultString.startsWith('"') && resultString.endsWith('"')) {
+        resultString = resultString.substring(1, resultString.length - 1);
+        resultString = resultString.replaceAll('\\"', '"').replaceAll('\\\\', '\\');
+      }
 
-      if (data is String) {
-        data = jsonDecode(data);
+      dynamic data;
+      try {
+        data = jsonDecode(resultString);
+      } catch (e) {
+        print('❌ JSON解析失敗: $e');
+        print('🐛 原始結果: $resultString');
+        onStatusChange('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
+        return null;
       }
 
       if (data['success'] == true) {
-        print("✅ 重試成功找到播放地址: ${data['url']} (來源: ${data['source']})");
-        return data['url'];
+        final actressUrl = data['url'];
+        final actressName = data['name'];
+        print('✅ 找到女優連結: $actressUrl');
+        print('🎭 女優名稱: $actressName');
+        
+        return {
+          'url': actressUrl,
+          'name': actressName,
+        };
+      } else {
+        onStatusChange('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
+        return null;
       }
     } catch (e) {
-      print("❌ 重試提取播放地址時發生錯誤: $e");
+      onStatusChange('❌ 搜尋女優連結時發生錯誤: $e');
+      return null;
     }
-
-    return null;
   }
 }
