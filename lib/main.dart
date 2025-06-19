@@ -63,9 +63,17 @@ class BackgroundPatternPainter extends CustomPainter {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+
+  // 檢查 Firebase 是否已經初始化，避免重複初始化
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // Firebase 已經初始化，跳過
+    print('Firebase已經初始化或初始化失敗: $e');
+  }
+
   runApp(const MyApp());
 }
 
@@ -4199,351 +4207,437 @@ class _VideoDetailDialogState extends State<VideoDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Dialog(
+    final screenSize = MediaQuery.of(context).size;
+    
+    // 響應式設計 - 根據螢幕大小調整對話框大小
+    final dialogWidth = math.min(screenSize.width * 0.9, 450.0);
+    final maxDialogHeight = screenSize.height * 0.85;
+    
+    // 根據影片類型設定圖片比例
+    final imageAspectRatio = widget.isAnime ? 0.7 : 1.6; // 動畫直向，真人橫向
+    final imageHeight = dialogWidth / imageAspectRatio;
+    
+    // 計算內容區域高度
+    const titleAreaHeight = 140.0; // 增加標題和按鈕區域高度
+    const padding = 40.0; // 增加上下內邊距
+    final totalContentHeight = imageHeight + titleAreaHeight + padding;
+    
+    // 確保對話框不超出螢幕，預留更多空間給按鈕
+    final dialogHeight = math.min(totalContentHeight, maxDialogHeight);
+    
+        return Dialog(
       backgroundColor: Colors.transparent,
-      child: Container(
-        width: 600,
-        height: 500,
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.9),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: maxDialogHeight,
+          maxWidth: dialogWidth,
         ),
-        child: Column(
-          children: [
-            // 圖片區域
-            Expanded(
-              flex: 3,
-              child: Container(
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    if (widget.video['img_url']?.isNotEmpty == true)
-                      Image.network(
-                        widget.video['img_url'],
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            color: Colors.grey.shade800,
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    widget.isAnime
-                                        ? Icons.animation
-                                        : Icons.video_library,
-                                    size: 64,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    widget.isAnime ? '動畫影片' : '真人影片',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      )
-                    else
-                      Container(
-                        color: Colors.grey.shade800,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                widget.isAnime
-                                    ? Icons.animation
-                                    : Icons.video_library,
-                                size: 64,
-                                color: Colors.white,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                widget.isAnime ? '動畫影片' : '真人影片',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                ),
+        child: Container(
+          width: dialogWidth,
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.95),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.2), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.5),
+                blurRadius: 20,
+                spreadRadius: 5,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 圖片區域 - 動態調整高度
+              Flexible(
+                flex: 3,
+                child: Container(
+                  width: double.infinity,
+                  constraints: BoxConstraints(
+                    maxHeight: maxDialogHeight * 0.65, // 最大65%高度給圖片
+                    minHeight: 180, // 最小高度
+                  ),
+                  decoration: const BoxDecoration(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (widget.video['img_url']?.isNotEmpty == true)
+                        _buildResponsiveImage()
+                      else
+                        _buildPlaceholderImage(),
+                      
+                      // 類型標籤
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: widget.isAnime ? Colors.pink : Colors.blue,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
                               ),
                             ],
                           ),
-                        ),
-                      ),
-                    // 類型標籤
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: widget.isAnime ? Colors.pink : Colors.blue,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          widget.isAnime ? '動畫' : '真人',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                          child: Text(
+                            widget.isAnime ? '動畫' : '真人',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    // 關閉按鈕
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: Focus(
-                        focusNode: _closeFocusNode,
-                        onKey: (node, event) {
-                          if (event is RawKeyDownEvent) {
-                            if (event.logicalKey == LogicalKeyboardKey.select ||
-                                event.logicalKey == LogicalKeyboardKey.enter ||
-                                event.logicalKey == LogicalKeyboardKey.space) {
-                              Navigator.of(context).pop();
-                              HapticFeedback.selectionClick();
-                              return KeyEventResult.handled;
+                      
+                      // 關閉按鈕
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Focus(
+                          focusNode: _closeFocusNode,
+                          onKey: (node, event) {
+                            if (event is RawKeyDownEvent) {
+                              if (event.logicalKey == LogicalKeyboardKey.select ||
+                                  event.logicalKey == LogicalKeyboardKey.enter ||
+                                  event.logicalKey == LogicalKeyboardKey.space) {
+                                Navigator.of(context).pop();
+                                HapticFeedback.selectionClick();
+                                return KeyEventResult.handled;
+                              }
                             }
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: Builder(
-                          builder: (context) {
-                            final hasFocus = Focus.of(context).hasFocus;
-                            return InkWell(
-                              onTap: () => Navigator.of(context).pop(),
-                              borderRadius: BorderRadius.circular(20),
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: hasFocus
-                                      ? Colors.white.withOpacity(0.3)
-                                      : Colors.black.withOpacity(0.5),
-                                  shape: BoxShape.circle,
-                                  border: hasFocus
-                                      ? Border.all(
-                                          color: Colors.white, width: 2)
-                                      : null,
-                                ),
-                                child: const Icon(
-                                  Icons.close,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                            );
+                            return KeyEventResult.ignored;
                           },
+                          child: Builder(
+                            builder: (context) {
+                              final hasFocus = Focus.of(context).hasFocus;
+                              return InkWell(
+                                onTap: () => Navigator.of(context).pop(),
+                                borderRadius: BorderRadius.circular(20),
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: hasFocus
+                                        ? Colors.white.withOpacity(0.3)
+                                        : Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                    border: hasFocus
+                                        ? Border.all(color: Colors.white, width: 2)
+                                        : null,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.3),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.close,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // 詳細信息區域 - 固定底部空間
+              Container(
+                width: double.infinity,
+                constraints: const BoxConstraints(
+                  minHeight: 100,
+                  maxHeight: 120,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 標題區域 - 限制高度
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 標題
+                          Flexible(
+                            child: Text(
+                              widget.video['title'] ?? '未知標題',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                height: 1.1,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          
+                          // 影片ID
+                          Text(
+                            '影片 ID: ${widget.video['id'] ?? 'N/A'}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 8),
+                    
+                    // 按鈕區域 - 固定高度
+                    SizedBox(
+                      height: 40, // 減少按鈕高度
+                      child: Row(
+                        children: [
+                          // 收藏按鈕
+                          Expanded(
+                            child: _buildActionButton(
+                              focusNode: _favoriteFocusNode,
+                              onTap: () {
+                                widget.onToggleFavorite();
+                                setState(() {}); // 更新收藏狀態顯示
+                              },
+                              icon: widget.isFavorite
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
+                              label: widget.isFavorite ? '取消收藏' : '收藏',
+                              color: widget.isFavorite ? Colors.red : null,
+                              isPrimary: false,
+                            ),
+                          ),
+                          
+                          const SizedBox(width: 8),
+                          
+                          // 播放按鈕
+                          Expanded(
+                            flex: 2,
+                            child: _buildActionButton(
+                              focusNode: _playFocusNode,
+                              autofocus: true,
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                widget.onPlay();
+                              },
+                              icon: Icons.play_arrow,
+                              label: '立即播放',
+                              color: widget.isAnime ? Colors.pink : Colors.blue,
+                              isPrimary: true,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 響應式圖片顯示
+  Widget _buildResponsiveImage() {
+    return FutureBuilder<ImageInfo>(
+      future: _getImageInfo(widget.video['img_url']),
+      builder: (context, snapshot) {
+        BoxFit imageFit = BoxFit.cover;
+        
+        if (snapshot.hasData && snapshot.data != null) {
+          final imageInfo = snapshot.data!;
+          final imageWidth = imageInfo.image.width.toDouble();
+          final imageHeight = imageInfo.image.height.toDouble();
+          final imageAspectRatio = imageWidth / imageHeight;
+          
+          // 根據圖片和容器的比例選擇合適的顯示方式
+          if (widget.isAnime) {
+            // 動畫：如果是橫向圖片，用 contain 保持完整
+            imageFit = imageAspectRatio > 1.0 ? BoxFit.contain : BoxFit.cover;
+          } else {
+            // 真人：如果是直向圖片，用 contain 保持完整
+            imageFit = imageAspectRatio < 1.0 ? BoxFit.contain : BoxFit.cover;
+          }
+        }
+        
+        return Image.network(
+          widget.video['img_url'],
+          fit: imageFit,
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (context, error, stackTrace) => _buildPlaceholderImage(),
+        );
+      },
+    );
+  }
+
+  // 佔位符圖片
+  Widget _buildPlaceholderImage() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.grey.shade800,
+            Colors.grey.shade900,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              widget.isAnime ? Icons.animation : Icons.video_library,
+              size: 48,
+              color: Colors.white.withOpacity(0.7),
             ),
-            // 詳細信息區域
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 標題
-                    Text(
-                      widget.video['title'] ?? '未知標題',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 8),
-                    // 影片ID
-                    Text(
-                      '影片 ID: ${widget.video['id'] ?? 'N/A'}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const Spacer(),
-                    // 按鈕區域
-                    Row(
-                      children: [
-                        // 收藏按鈕
-                        Expanded(
-                          child: Focus(
-                            focusNode: _favoriteFocusNode,
-                            onKey: (node, event) {
-                              if (event is RawKeyDownEvent) {
-                                if (event.logicalKey ==
-                                        LogicalKeyboardKey.select ||
-                                    event.logicalKey ==
-                                        LogicalKeyboardKey.enter ||
-                                    event.logicalKey ==
-                                        LogicalKeyboardKey.space) {
-                                  widget.onToggleFavorite();
-                                  HapticFeedback.selectionClick();
-                                  setState(() {}); // 更新收藏狀態顯示
-                                  return KeyEventResult.handled;
-                                }
-                              }
-                              return KeyEventResult.ignored;
-                            },
-                            child: Builder(
-                              builder: (context) {
-                                final hasFocus = Focus.of(context).hasFocus;
-                                return InkWell(
-                                  onTap: () {
-                                    widget.onToggleFavorite();
-                                    setState(() {}); // 更新收藏狀態顯示
-                                  },
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12),
-                                    decoration: BoxDecoration(
-                                      color: hasFocus
-                                          ? Colors.white.withOpacity(0.2)
-                                          : Colors.white.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: hasFocus
-                                          ? Border.all(
-                                              color: Colors.white, width: 2)
-                                          : Border.all(
-                                              color:
-                                                  Colors.white.withOpacity(0.3),
-                                              width: 1),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          widget.isFavorite
-                                              ? Icons.favorite
-                                              : Icons.favorite_border,
-                                          color: widget.isFavorite
-                                              ? Colors.red
-                                              : Colors.white,
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          widget.isFavorite ? '取消收藏' : '加入收藏',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        // 播放按鈕
-                        Expanded(
-                          flex: 2,
-                          child: Focus(
-                            focusNode: _playFocusNode,
-                            autofocus: true,
-                            onKey: (node, event) {
-                              if (event is RawKeyDownEvent) {
-                                if (event.logicalKey ==
-                                        LogicalKeyboardKey.select ||
-                                    event.logicalKey ==
-                                        LogicalKeyboardKey.enter ||
-                                    event.logicalKey ==
-                                        LogicalKeyboardKey.space) {
-                                  Navigator.of(context).pop();
-                                  widget.onPlay();
-                                  HapticFeedback.selectionClick();
-                                  return KeyEventResult.handled;
-                                }
-                              }
-                              return KeyEventResult.ignored;
-                            },
-                            child: Builder(
-                              builder: (context) {
-                                final hasFocus = Focus.of(context).hasFocus;
-                                return InkWell(
-                                  onTap: () {
-                                    Navigator.of(context).pop();
-                                    widget.onPlay();
-                                  },
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 12),
-                                    decoration: BoxDecoration(
-                                      color: hasFocus
-                                          ? (widget.isAnime
-                                              ? Colors.pink
-                                              : Colors.blue)
-                                          : (widget.isAnime
-                                              ? Colors.pink.withOpacity(0.7)
-                                              : Colors.blue.withOpacity(0.7)),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: hasFocus
-                                          ? Border.all(
-                                              color: Colors.white, width: 2)
-                                          : null,
-                                    ),
-                                    child: const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.play_arrow,
-                                          color: Colors.white,
-                                          size: 24,
-                                        ),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          '立即播放',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+            const SizedBox(height: 8),
+            Text(
+              widget.isAnime ? '動畫影片' : '真人影片',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 14,
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+     // 操作按鈕組件 - 優化尺寸和邊距
+   Widget _buildActionButton({
+     required FocusNode focusNode,
+     required VoidCallback onTap,
+     required IconData icon,
+     required String label,
+     Color? color,
+     bool isPrimary = false,
+     bool autofocus = false,
+   }) {
+     return Focus(
+       focusNode: focusNode,
+       autofocus: autofocus,
+       onKey: (node, event) {
+         if (event is RawKeyDownEvent) {
+           if (event.logicalKey == LogicalKeyboardKey.select ||
+               event.logicalKey == LogicalKeyboardKey.enter ||
+               event.logicalKey == LogicalKeyboardKey.space) {
+             onTap();
+             HapticFeedback.selectionClick();
+             return KeyEventResult.handled;
+           }
+         }
+         return KeyEventResult.ignored;
+       },
+       child: Builder(
+         builder: (context) {
+           final hasFocus = Focus.of(context).hasFocus;
+           return InkWell(
+             onTap: onTap,
+             borderRadius: BorderRadius.circular(6),
+             child: Container(
+               height: 36, // 減少按鈕高度
+               padding: const EdgeInsets.symmetric(horizontal: 4),
+               decoration: BoxDecoration(
+                 color: hasFocus
+                     ? (color ?? Colors.white.withOpacity(0.2))
+                     : (isPrimary
+                         ? (color?.withOpacity(0.8) ?? Colors.blue.withOpacity(0.8))
+                         : Colors.white.withOpacity(0.1)),
+                 borderRadius: BorderRadius.circular(6),
+                 border: hasFocus
+                     ? Border.all(color: Colors.white, width: 2)
+                     : Border.all(
+                         color: Colors.white.withOpacity(0.2),
+                         width: 1),
+                 boxShadow: hasFocus
+                     ? [
+                         BoxShadow(
+                           color: (color ?? Colors.blue).withOpacity(0.2),
+                           blurRadius: 6,
+                           spreadRadius: 1,
+                           offset: const Offset(0, 2),
+                         ),
+                       ]
+                     : null,
+               ),
+               child: Row(
+                 mainAxisAlignment: MainAxisAlignment.center,
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   Icon(
+                     icon,
+                     color: Colors.white,
+                     size: isPrimary ? 18 : 16,
+                   ),
+                   const SizedBox(width: 4),
+                   Flexible(
+                     child: Text(
+                       label,
+                       style: TextStyle(
+                         color: Colors.white,
+                         fontSize: isPrimary ? 14 : 12,
+                         fontWeight: isPrimary ? FontWeight.bold : FontWeight.w500,
+                       ),
+                       overflow: TextOverflow.ellipsis,
+                     ),
+                   ),
+                 ],
+               ),
+             ),
+           );
+         },
+       ),
+     );
+   }
+
+  // 獲取圖片信息
+  Future<ImageInfo> _getImageInfo(String imageUrl) async {
+    final imageProvider = NetworkImage(imageUrl);
+    final stream = imageProvider.resolve(const ImageConfiguration());
+    final completer = Completer<ImageInfo>();
+
+    final listener = ImageStreamListener((ImageInfo info, bool _) {
+      if (!completer.isCompleted) {
+        completer.complete(info);
+      }
+    }, onError: (dynamic exception, StackTrace? stackTrace) {
+      if (!completer.isCompleted) {
+        completer.completeError(exception, stackTrace);
+      }
+    });
+
+    stream.addListener(listener);
+
+    try {
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } finally {
+      stream.removeListener(listener);
+    }
   }
 }
