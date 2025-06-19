@@ -356,40 +356,10 @@ class AnimeCrawler {
 
     try {
       // 創建一些測試資料，確保至少有一些內容
-      final testData = [
-        {
-          'id': 1,
-          'title': '測試動畫 1',
-          'detail_url': 'https://hanime1.me/watch?v=test1',
-          'img_url': 'https://via.placeholder.com/300x200?text=Test1',
-          'episodes': '12'
-        },
-        {
-          'id': 2,
-          'title': '測試動畫 2',
-          'detail_url': 'https://hanime1.me/watch?v=test2',
-          'img_url': 'https://via.placeholder.com/300x200?text=Test2',
-          'episodes': '24'
-        },
-        {
-          'id': 3,
-          'title': '測試動畫 3',
-          'detail_url': 'https://hanime1.me/watch?v=test3',
-          'img_url': 'https://via.placeholder.com/300x200?text=Test3',
-          'episodes': '6'
-        }
-      ];
-
-      onDataUpdate(testData);
+      // 移除測試數據，只有無法抓取時才顯示空列表
+      onDataUpdate([]);
       onLoadingChange(false);
-      onStatusChange('使用測試資料，共 ${testData.length} 個影片（網站可能正在維護）');
-      try {
-        await dbRef.set(testData);
-        print('🔥 最終方法 Firebase 更新成功！');
-      } catch (e) {
-        print('🔥 最終方法 Firebase 更新失敗: $e');
-        onStatusChange('最終方法 Firebase 更新失敗: $e');
-      }
+      onStatusChange('無法抓取動畫列表，請檢查網路連接或稍後再試');
     } catch (e) {
       onLoadingChange(false);
       onStatusChange('所有方法都失敗了: $e');
@@ -547,11 +517,10 @@ class AnimeCrawler {
     }
   }
 
-  // 生成測試URL作為後備方案
+  // 移除測試URL，確保僅使用真實提取的地址
   Future<String?> _generateTestUrl() async {
-    print("🔥 使用測試播放地址作為後備方案");
-    // 這裡可以返回一個通用的測試影片URL
-    return "https://sample-videos.com/zip/10/mp4/SampleVideo_1280x720_1mb.mp4";
+    print("❌ 無法提取播放地址，不使用後備方案");
+    return null;
   }
 
   Future<void> _debugPageStructure() async {
