@@ -1,7 +1,7 @@
 name: videotv_tv_test
 description: VideoTV Android TV Test Version
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.1.2+5
 
 environment:
   sdk: '>=2.17.0 <3.0.0'
@@ -28,6 +28,16 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
-  uses-material-design: true 
+  uses-material-design: true
+  assets:
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/foreground.png"
+  adaptive_icon_background: "assets/icon/background.png"
+  adaptive_icon_foreground: "assets/icon/foreground.png" 

@@ -29,11 +29,10 @@ class AppConstants {
   static const double cardAspectRatio = 16 / 9;
   
   // Firebase 節點名稱
-  static const String videosNode = 'videos';
-  static const String animeVideosNode = 'anime_videos';
+  static const String videosNode = 'realVideos';
+  static const String animeVideosNode = 'animeVideos';
   static const String favoritesNode = 'favorites';
   static const String latestVersionNode = 'latest_version_info';
-  static const String realVideosNode = 'realVideos';
   static const String appInfoNode = 'appInfo';
   
   // 文字大小
@@ -57,7 +56,8 @@ class AppConstants {
   static const String appVersion = '1.1.0';
   
   // URL 常數
-  static const String updateCheckUrl = 'https://api.github.com/repos/username/videotv/releases/latest';
+  static const String updateCheckUrl = 'https://api.github.com/repos/gwolf0719/videotv/releases/latest';
+  static const String apkDownloadUrl = 'https://github.com/gwolf0719/videotv/releases/download/apk/videotv.apk';
   
   // 私有建構子，確保這是一個純靜態類別
   AppConstants._();

@@ -1,4 +1,5 @@
 enum VideoType {
+  all,
   real,
   anime,
 }
@@ -6,6 +7,8 @@ enum VideoType {
 extension VideoTypeExtension on VideoType {
   String get displayName {
     switch (this) {
+      case VideoType.all:
+        return '全部影片';
       case VideoType.real:
         return '真人影片';
       case VideoType.anime:

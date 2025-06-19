@@ -1,18 +1,17 @@
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import '../shared/models/video_model.dart';
+import 'firebase_service.dart';
 
 class VideoRepository {
   final DatabaseReference _dbRef;
+  final FirebaseService _firebaseService = FirebaseService();
   final Map<String, List<VideoModel>> _cache = {};
   final StreamController<List<VideoModel>> _realVideosController = StreamController.broadcast();
   final StreamController<List<VideoModel>> _animeVideosController = StreamController.broadcast();
   List<VideoModel> _cachedVideos = [];
   List<VideoModel> _cachedFavorites = [];
   VideoType _currentFilter = VideoType.real;
-  
-  // Getter for FirebaseService
-  FirebaseService get firebaseService => _firebaseService;
   
   // 資料流控制器
   final StreamController<List<VideoModel>> _videosStreamController = 
@@ -41,10 +40,15 @@ class VideoRepository {
 
   VideoRepository(this._dbRef);
 
+  void _setLoading(bool loading) {
+    _loadingStreamController.add(loading);
+  }
+
   Future<void> initialize() async {
     await _firebaseService.initialize();
     if (_firebaseService.isAvailable) {
       await loadFavoriteVideos();
+      await loadAllVideos();
     }
   }
 
@@ -85,7 +89,7 @@ class VideoRepository {
       _currentFilter = type;
       _videosStreamController.add(_getFilteredVideos());
     } catch (e) {
-      print('載入${type.displayName}失敗: $e');
+      print('載入${type.toString()}失敗: $e');
       _videosStreamController.addError(e);
     } finally {
       _setLoading(false);
@@ -98,10 +102,9 @@ class VideoRepository {
   }
 
   List<VideoModel> _getFilteredVideos() {
-    if (_currentFilter == VideoType.real || _currentFilter == VideoType.anime) {
-      return _cachedVideos;
-    }
-    return _cachedVideos.where((video) => _currentFilter.matches(video)).toList();
+    return _cachedVideos.where((video) => 
+      _currentFilter == VideoType.all || video.type == _currentFilter
+    ).toList();
   }
 
   Future<bool> addToFavorites(VideoModel video) async {
@@ -155,8 +158,6 @@ class VideoRepository {
       return null;
     }
   }
-
-
 
   // 載入真人影片
   Future<void> loadRealVideos() async {
@@ -306,10 +307,6 @@ class VideoRepository {
     return allVideos.where((video) {
       return video.title.toLowerCase().contains(lowerQuery);
     }).toList();
-  }
-
-  void _setLoading(bool isLoading) {
-    _loadingStreamController.add(isLoading);
   }
 
   void dispose() {

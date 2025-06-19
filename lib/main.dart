@@ -19,6 +19,7 @@ import 'package:open_file/open_file.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'crawlers/real_crawler.dart';
 import 'crawlers/anime_crawler.dart';
+import 'core/constants/app_constants.dart';
 
 // 背景圖案畫家
 class BackgroundPatternPainter extends CustomPainter {
@@ -294,7 +295,8 @@ class _MyHomePageState extends State<MyHomePage> {
       if (snapshot.exists) {
         final data = Map<String, dynamic>.from(snapshot.value as Map);
         final latestVersion = data['latest_version'] ?? '';
-        final apkUrl = data['apk_url'] ?? '';
+        // 使用固定的 GitHub APK 下載連結
+        final apkUrl = AppConstants.apkDownloadUrl;
         if (latestVersion != '' &&
             latestVersion != localVersion &&
             apkUrl != '') {
