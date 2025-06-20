@@ -28,7 +28,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   
   bool _isWebViewLoading = true;
   bool _isVideoLoading = false;
-  String? _playUrl;
   String _statusMessage = '正在載入影片...';
   bool _isFullScreen = false;
   
@@ -103,7 +102,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   Future<void> _loadRecommendedVideos() async {
     try {
       await _videoRepository.initialize();
-      final allVideos = _videoRepository.cachedVideos;
+      
+      // 從快取獲取所有影片
+      final realVideos = _videoRepository.getCachedRealVideos();
+      final animeVideos = _videoRepository.getCachedAnimeVideos();
+      final allVideos = [...realVideos, ...animeVideos];
+      
       if (allVideos.isNotEmpty) {
         final videos = allVideos
             .where((v) => v.id != widget.video.id)
@@ -252,7 +256,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           print('✅ 找到播放地址: $playUrl (來源: $source)');
           
           setState(() {
-            _playUrl = playUrl;
             _statusMessage = '準備播放影片...';
           });
           

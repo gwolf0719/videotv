@@ -27,6 +27,9 @@ class AppConstants {
   static const int minGridColumns = 2;
   static const int maxGridColumns = 6;
   static const double cardAspectRatio = 16 / 9;
+  static const int gridCrossAxisCount = 4;
+  static const double gridChildAspectRatio = 0.75;
+  static const double gridSpacing = 12.0;
   
   // Firebase 節點名稱
   static const String videosNode = 'realVideos';
@@ -40,6 +43,7 @@ class AppConstants {
   static const double subtitleFontSize = 18.0;
   static const double bodyFontSize = 16.0;
   static const double captionFontSize = 14.0;
+  static const double smallFontSize = 12.0;
   
   // 顏色常數
   static const int cardColor = 0xFF1E1E1E;

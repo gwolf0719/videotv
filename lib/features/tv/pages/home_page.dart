@@ -8,6 +8,7 @@ import '../widgets/video_grid.dart';
 import '../widgets/control_panel.dart';
 import '../widgets/search_bar.dart';
 import '../../../shared/widgets/background_pattern_widget.dart';
+import 'video_player_page.dart';
 
 class HomePage extends StatefulWidget {
   final VideoRepository videoRepository;
@@ -124,27 +125,22 @@ class _HomePageState extends State<HomePage> {
 
   void _handleKeyEvent(KeyEvent event) {
     if (event is KeyDownEvent) {
-      switch (event.logicalKey) {
-        case LogicalKeyboardKey.arrowLeft:
-          if (!_isControlPanelFocused && !_isSearchFocused) {
-            _controlPanelFocusNode.requestFocus();
-          }
-          break;
-        case LogicalKeyboardKey.arrowUp:
-          if (!_isSearchFocused) {
-            _searchFocusNode.requestFocus();
-          }
-          break;
-        case LogicalKeyboardKey.arrowRight:
-          if (_isControlPanelFocused || _isSearchFocused) {
-            _gridFocusNode.requestFocus();
-          }
-          break;
-        case LogicalKeyboardKey.arrowDown:
-          if (_isSearchFocused) {
-            _gridFocusNode.requestFocus();
-          }
-          break;
+      if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+        if (!_isControlPanelFocused && !_isSearchFocused) {
+          _controlPanelFocusNode.requestFocus();
+        }
+      } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        if (!_isSearchFocused) {
+          _searchFocusNode.requestFocus();
+        }
+      } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+        if (_isControlPanelFocused || _isSearchFocused) {
+          _gridFocusNode.requestFocus();
+        }
+      } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        if (_isSearchFocused) {
+          _gridFocusNode.requestFocus();
+        }
       }
     }
   }
@@ -202,13 +198,21 @@ class _HomePageState extends State<HomePage> {
                           child: _isLoading
                               ? const Center(
                                   child: CircularProgressIndicator(
-                                    color: AppConstants.primaryColor,
+                                    color: Color(AppConstants.primaryColor),
                                   ),
                                 )
                               : VideoGrid(
                                   focusNode: _gridFocusNode,
                                   videos: _filteredVideos,
                                   isFocused: !_isControlPanelFocused && !_isSearchFocused,
+                                  onVideoTap: (video) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => VideoPlayerPage(video: video),
+                                      ),
+                                    );
+                                  },
                                 ),
                         ),
                       ],

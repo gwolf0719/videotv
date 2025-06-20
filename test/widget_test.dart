@@ -5,13 +5,17 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:videotv/main.dart';
+import '../lib/main.dart';
 
 void main() {
-  testWidgets('App shows title', (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
-    expect(find.text('VideoTV'), findsOneWidget);
+  testWidgets('VideoTV app smoke test', (WidgetTester tester) async {
+    // Build our app and trigger a frame.
+    await tester.pumpWidget(const VideoTVApp());
+
+    // Verify that our app starts up without crashing
+    expect(find.text('正在初始化 VideoTV...'), findsOneWidget);
   });
 }

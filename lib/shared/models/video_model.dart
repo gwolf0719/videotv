@@ -25,6 +25,12 @@ class VideoModel {
   final VideoType? type;
   final DateTime? addedAt;
   final Map<String, dynamic>? metadata;
+  
+  // 新增的屬性
+  final String? description;
+  final String? duration;
+  final DateTime? uploadDate;
+  final List<String>? tags;
 
   const VideoModel({
     required this.id,
@@ -34,6 +40,10 @@ class VideoModel {
     this.type,
     this.addedAt,
     this.metadata,
+    this.description,
+    this.duration,
+    this.uploadDate,
+    this.tags,
   });
 
   // 顯示標題（移除多餘空白和特殊字符）
@@ -56,6 +66,9 @@ class VideoModel {
     return type == VideoType.anime;
   }
 
+  // 兼容性屬性：publishTime
+  DateTime? get publishTime => uploadDate ?? addedAt;
+
   // 從 Map 建立實例
   factory VideoModel.fromMap(Map<String, dynamic> map) {
     return VideoModel(
@@ -66,6 +79,10 @@ class VideoModel {
       type: _parseVideoType(map['type']?.toString()),
       addedAt: map['addedAt'] != null ? DateTime.tryParse(map['addedAt'].toString()) : null,
       metadata: map['metadata'] is Map<String, dynamic> ? map['metadata'] : null,
+      description: map['description']?.toString(),
+      duration: map['duration']?.toString(),
+      uploadDate: map['uploadDate'] != null ? DateTime.tryParse(map['uploadDate'].toString()) : null,
+      tags: map['tags'] is List ? List<String>.from(map['tags']) : null,
     );
   }
 
@@ -79,6 +96,10 @@ class VideoModel {
       'type': type?.name,
       'addedAt': addedAt?.toIso8601String(),
       'metadata': metadata,
+      'description': description,
+      'duration': duration,
+      'uploadDate': uploadDate?.toIso8601String(),
+      'tags': tags,
     };
   }
 
@@ -109,6 +130,10 @@ class VideoModel {
     DateTime? addedAt,
     Map<String, dynamic>? metadata,
     bool? isAnime, // 兼容性參數
+    String? description,
+    String? duration,
+    DateTime? uploadDate,
+    List<String>? tags,
   }) {
     VideoType? finalType = type ?? this.type;
     
@@ -125,6 +150,10 @@ class VideoModel {
       type: finalType,
       addedAt: addedAt ?? this.addedAt,
       metadata: metadata ?? this.metadata,
+      description: description ?? this.description,
+      duration: duration ?? this.duration,
+      uploadDate: uploadDate ?? this.uploadDate,
+      tags: tags ?? this.tags,
     );
   }
 

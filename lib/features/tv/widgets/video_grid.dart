@@ -7,6 +7,8 @@ class VideoGrid extends StatelessWidget {
   final List<VideoModel> videos;
   final Function(VideoModel) onVideoTap;
   final ScrollController? scrollController;
+  final FocusNode? focusNode;
+  final bool isFocused;
   final int crossAxisCount;
   final double childAspectRatio;
   final double spacing;
@@ -16,6 +18,8 @@ class VideoGrid extends StatelessWidget {
     required this.videos,
     required this.onVideoTap,
     this.scrollController,
+    this.focusNode,
+    this.isFocused = false,
     this.crossAxisCount = AppConstants.gridCrossAxisCount,
     this.childAspectRatio = AppConstants.gridChildAspectRatio,
     this.spacing = AppConstants.gridSpacing,
@@ -27,23 +31,27 @@ class VideoGrid extends StatelessWidget {
       return _buildEmptyState(context);
     }
 
-    return GridView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.all(AppConstants.defaultPadding),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        childAspectRatio: childAspectRatio,
-        crossAxisSpacing: spacing,
-        mainAxisSpacing: spacing,
+    return Focus(
+      focusNode: focusNode,
+      child: GridView.builder(
+        controller: scrollController,
+        padding: const EdgeInsets.all(AppConstants.defaultPadding),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: crossAxisCount,
+          childAspectRatio: childAspectRatio,
+          crossAxisSpacing: spacing,
+          mainAxisSpacing: spacing,
+        ),
+        itemCount: videos.length,
+        itemBuilder: (context, index) {
+          final video = videos[index];
+          return VideoCard(
+            video: video,
+            onTap: () => onVideoTap(video),
+            isFocused: isFocused && index == 0, // 簡化的焦點邏輯
+          );
+        },
       ),
-      itemCount: videos.length,
-      itemBuilder: (context, index) {
-        final video = videos[index];
-        return VideoCard(
-          video: video,
-          onTap: () => onVideoTap(video),
-        );
-      },
     );
   }
 

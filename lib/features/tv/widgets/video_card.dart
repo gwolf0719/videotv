@@ -91,13 +91,13 @@ class _VideoCardState extends State<VideoCard>
           child: Card(
             elevation: _elevationAnimation.value,
             color: widget.isFocused 
-                ? AppConstants.focusedCardColor 
-                : AppConstants.cardColor,
+                ? const Color(AppConstants.focusedCardColor)
+                : const Color(AppConstants.cardColor),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppConstants.cardBorderRadius),
               side: widget.isFocused
                   ? const BorderSide(
-                      color: AppConstants.primaryColor,
+                      color: Color(AppConstants.primaryColor),
                       width: 2,
                     )
                   : BorderSide.none,
@@ -140,7 +140,7 @@ class _VideoCardState extends State<VideoCard>
                                               loadingProgress.expectedTotalBytes!
                                           : null,
                                       valueColor: const AlwaysStoppedAnimation<Color>(
-                                        AppConstants.primaryColor,
+                                        Color(AppConstants.primaryColor),
                                       ),
                                     ),
                                   );
@@ -172,28 +172,44 @@ class _VideoCardState extends State<VideoCard>
                           
                           const Spacer(),
                           
-                          // 類型標籤
-                          if (widget.video.type != null)
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: widget.video.type == VideoType.real
-                                    ? AppConstants.realVideoColor
-                                    : AppConstants.animeVideoColor,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                widget.video.type == VideoType.real ? '真人' : '動漫',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
+                          // 類型標籤和時長
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // 類型標籤
+                              if (widget.video.type != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: widget.video.type == VideoType.real
+                                        ? const Color(AppConstants.realVideoColor)
+                                        : const Color(AppConstants.animeVideoColor),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    widget.video.type == VideoType.real ? '真人' : '動漫',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
+                              
+                              // 時長
+                              if (widget.video.duration != null)
+                                Text(
+                                  widget.video.duration!,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -209,21 +225,21 @@ class _VideoCardState extends State<VideoCard>
 
   Widget _buildPlaceholder() {
     return Container(
-      color: Colors.grey[800],
-      child: const Center(
+      color: Colors.grey[700],
+      child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.play_circle_outline,
-              size: 40,
-              color: Colors.grey,
+              widget.video.type == VideoType.real ? Icons.movie : Icons.animation,
+              color: Colors.white60,
+              size: 32,
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
-              '無縮圖',
-              style: TextStyle(
-                color: Colors.grey,
+              widget.video.type == VideoType.real ? '真人影片' : '動漫影片',
+              style: const TextStyle(
+                color: Colors.white60,
                 fontSize: 12,
               ),
             ),
