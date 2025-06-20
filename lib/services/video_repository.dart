@@ -32,6 +32,16 @@ class VideoRepository {
   bool get isFirebaseAvailable => _firebaseService.isAvailable;
   VideoType get currentFilter => _currentFilter;
 
+  // 獲取快取的真人影片
+  List<VideoModel> getCachedRealVideos() {
+    return _cachedVideos.where((v) => v.type == VideoType.real).toList();
+  }
+
+  // 獲取快取的動漫影片
+  List<VideoModel> getCachedAnimeVideos() {
+    return _cachedVideos.where((v) => v.type == VideoType.anime).toList();
+  }
+
   // 真人影片流
   Stream<List<VideoModel>> get realVideosStream => _realVideosController.stream;
   
@@ -49,7 +59,63 @@ class VideoRepository {
     if (_firebaseService.isAvailable) {
       await loadFavoriteVideos();
       await loadAllVideos();
+    } else {
+      // Firebase 不可用時，使用本地測試數據
+      _initializeTestData();
     }
+  }
+
+  void _initializeTestData() {
+    print('🔧 正在初始化本地測試數據...');
+    
+    final testVideos = [
+      VideoModel(
+        id: 'test_1',
+        title: '測試真人影片 1',
+        description: '這是一個測試用的真人影片',
+        thumbnailUrl: 'https://via.placeholder.com/300x200/FF6B9D/FFFFFF?text=真人影片1',
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        type: VideoType.real,
+        publishTime: DateTime.now().subtract(const Duration(days: 1)),
+      ),
+      VideoModel(
+        id: 'test_2',
+        title: '測試真人影片 2',
+        description: '這是另一個測試用的真人影片',
+        thumbnailUrl: 'https://via.placeholder.com/300x200/6C63FF/FFFFFF?text=真人影片2',
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+        type: VideoType.real,
+        publishTime: DateTime.now().subtract(const Duration(days: 2)),
+      ),
+      VideoModel(
+        id: 'test_3',
+        title: '測試動漫影片 1',
+        description: '這是一個測試用的動漫影片',
+        thumbnailUrl: 'https://via.placeholder.com/300x200/4ECDC4/FFFFFF?text=動漫影片1',
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        type: VideoType.anime,
+        publishTime: DateTime.now().subtract(const Duration(days: 3)),
+      ),
+      VideoModel(
+        id: 'test_4',
+        title: '測試動漫影片 2',
+        description: '這是另一個測試用的動漫影片',
+        thumbnailUrl: 'https://via.placeholder.com/300x200/FF6B9D/FFFFFF?text=動漫影片2',
+        videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+        type: VideoType.anime,
+        publishTime: DateTime.now().subtract(const Duration(days: 4)),
+      ),
+    ];
+
+    _cachedVideos = testVideos;
+    _currentFilter = VideoType.real;
+    
+    // 發送資料到流中
+    _videosStreamController.add(_getFilteredVideos());
+    _realVideosController.add(testVideos.where((v) => v.type == VideoType.real).toList());
+    _animeVideosController.add(testVideos.where((v) => v.type == VideoType.anime).toList());
+    
+    print('✅ 本地測試數據初始化完成，共載入 ${testVideos.length} 個測試影片');
   }
 
   Future<void> loadAllVideos() async {
@@ -161,6 +227,14 @@ class VideoRepository {
 
   // 載入真人影片
   Future<void> loadRealVideos() async {
+    if (!_firebaseService.isAvailable) {
+      // Firebase 不可用時返回測試數據
+      final testRealVideos = _cachedVideos.where((v) => v.type == VideoType.real).toList();
+      _cache['real'] = testRealVideos;
+      _realVideosController.add(testRealVideos);
+      return;
+    }
+
     try {
       final snapshot = await _dbRef.child('realVideos').get();
       final videos = _parseVideosFromSnapshot(snapshot, VideoType.real);
@@ -174,6 +248,14 @@ class VideoRepository {
 
   // 載入動漫影片
   Future<void> loadAnimeVideos() async {
+    if (!_firebaseService.isAvailable) {
+      // Firebase 不可用時返回測試數據
+      final testAnimeVideos = _cachedVideos.where((v) => v.type == VideoType.anime).toList();
+      _cache['anime'] = testAnimeVideos;
+      _animeVideosController.add(testAnimeVideos);
+      return;
+    }
+
     try {
       final snapshot = await _dbRef.child('animeVideos').get();
       final videos = _parseVideosFromSnapshot(snapshot, VideoType.anime);

@@ -21,21 +21,31 @@ class FirebaseService {
 
   Future<bool> initialize() async {
     try {
-      // 檢查 Firebase 是否已經初始化
+      // 檢查 Firebase 是否可用
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
+        print('⚠️ Firebase 未初始化，數據庫服務不可用');
+        _isAvailable = false;
+        return false;
       }
       
+      // 嘗試初始化數據庫引用
       _dbRef = FirebaseDatabase.instance.ref().child(AppConstants.videosNode);
       _animeDbRef = FirebaseDatabase.instance.ref().child(AppConstants.animeVideosNode);
       _favoritesDbRef = FirebaseDatabase.instance.ref().child(AppConstants.favoritesNode);
-      _isAvailable = true;
       
+      // 測試連接
+      await _dbRef!.limitToFirst(1).once();
+      
+      _isAvailable = true;
       print('✅ Firebase 數據庫引用初始化成功');
       return true;
     } catch (e) {
       print('⚠️ Firebase 數據庫不可用: $e');
+      print('⚠️ 將運行在離線模式下');
       _isAvailable = false;
+      _dbRef = null;
+      _animeDbRef = null;
+      _favoritesDbRef = null;
       return false;
     }
   }

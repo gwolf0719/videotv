@@ -67,13 +67,19 @@ Future<void> main() async {
 
   // 檢查 Firebase 是否已經初始化，避免重複初始化
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print('✅ Firebase 初始化成功');
+    // 檢查是否已經有 Firebase 應用實例
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      print('✅ Firebase 初始化成功');
+    } else {
+      print('✅ Firebase 已經初始化');
+    }
   } catch (e) {
     // Firebase 初始化失敗，使用本地數據
-    print('⚠️ Firebase初始化失敗，將使用本地測試數據: $e');
+    print('❌ Firebase 初始化失敗: $e');
+    print('⚠️ 將使用本地測試數據模式');
   }
 
   runApp(const MyApp());
