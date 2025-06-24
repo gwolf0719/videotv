@@ -4,30 +4,17 @@ import 'dart:math' as math;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'core/constants/app_constants.dart';
-import 'services/firebase_service.dart';
 import 'services/video_repository.dart';
 import 'features/tv/pages/home_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print("✅ Firebase 初始化成功");
-  } catch (e) {
-    print("❌ Firebase 初始化失敗: $e");
-  }
   
   runApp(const VideoTVApp());
 }
@@ -71,7 +58,6 @@ class AppWrapper extends StatefulWidget {
 
 class _AppWrapperState extends State<AppWrapper> {
   late VideoRepository _videoRepository;
-  late FirebaseService _firebaseService;
   bool _isInitialized = false;
   String? _errorMessage;
 
@@ -83,13 +69,8 @@ class _AppWrapperState extends State<AppWrapper> {
 
   Future<void> _initializeServices() async {
     try {
-      // 初始化 Firebase 服務
-      _firebaseService = FirebaseService();
-      await _firebaseService.initialize();
-      
       // 初始化 VideoRepository
-      final dbRef = FirebaseDatabase.instance.ref();
-      _videoRepository = VideoRepository(dbRef);
+      _videoRepository = VideoRepository();
       
       // 載入初始資料
       await Future.wait([
@@ -182,7 +163,6 @@ class _AppWrapperState extends State<AppWrapper> {
 
     return HomePage(
       videoRepository: _videoRepository,
-      firebaseService: _firebaseService,
     );
   }
 } 

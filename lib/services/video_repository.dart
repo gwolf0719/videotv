@@ -1,17 +1,16 @@
 import 'dart:async';
-import 'package:firebase_database/firebase_database.dart';
 import '../shared/models/video_model.dart';
-import 'firebase_service.dart';
+import 'local_storage_service.dart';
 
 class VideoRepository {
-  final DatabaseReference _dbRef;
-  final FirebaseService _firebaseService = FirebaseService();
+  final LocalStorageService _localStorageService = LocalStorageService();
   final Map<String, List<VideoModel>> _cache = {};
   final StreamController<List<VideoModel>> _realVideosController = StreamController.broadcast();
   final StreamController<List<VideoModel>> _animeVideosController = StreamController.broadcast();
   List<VideoModel> _cachedVideos = [];
   List<VideoModel> _cachedFavorites = [];
   VideoType _currentFilter = VideoType.real;
+  bool _isLoadingFromCloud = false;
   
   // 資料流控制器
   final StreamController<List<VideoModel>> _videosStreamController = 
@@ -29,7 +28,7 @@ class VideoRepository {
   // Getters
   List<VideoModel> get cachedVideos => _cachedVideos;
   List<VideoModel> get cachedFavorites => _cachedFavorites;
-  bool get isFirebaseAvailable => _firebaseService.isAvailable;
+  bool get isFirebaseAvailable => false;
   VideoType get currentFilter => _currentFilter;
 
   // 獲取快取的真人影片
@@ -48,62 +47,100 @@ class VideoRepository {
   // 動漫影片流
   Stream<List<VideoModel>> get animeVideosStream => _animeVideosController.stream;
 
-  VideoRepository(this._dbRef);
+  VideoRepository();
 
   void _setLoading(bool loading) {
     _loadingStreamController.add(loading);
   }
 
   Future<void> initialize() async {
-    await _firebaseService.initialize();
-    if (_firebaseService.isAvailable) {
-      await loadFavoriteVideos();
-      await loadAllVideos();
-    } else {
-      // Firebase 不可用時，使用本地測試數據
+    print('🚀 開始初始化 VideoRepository...');
+    
+    // 先載入本地暫存資料
+    await _loadLocalCacheData();
+    
+    // 載入本地收藏
+    await _loadLocalFavorites();
+    
+    print('✅ VideoRepository 初始化完成 (本地模式)');
+  }
+  
+  // 載入本地暫存資料
+  Future<void> _loadLocalCacheData() async {
+    try {
+      final hasCachedData = await _localStorageService.hasCachedData();
+      
+      if (hasCachedData) {
+        print('📱 載入本地暫存資料...');
+        final cachedVideos = await _localStorageService.getCachedVideoList();
+        _cachedVideos = cachedVideos;
+        _currentFilter = VideoType.real;
+        
+        // 發送資料到流中
+        _videosStreamController.add(_getFilteredVideos());
+        _realVideosController.add(cachedVideos.where((v) => v.type == VideoType.real).toList());
+        _animeVideosController.add(cachedVideos.where((v) => v.type == VideoType.anime).toList());
+        
+        print('✅ 成功載入本地暫存 ${cachedVideos.length} 個影片');
+      } else {
+        print('⚠️ 沒有本地暫存資料，使用測試資料');
+        _initializeTestData();
+      }
+    } catch (e) {
+      print('❌ 載入本地暫存失敗: $e，使用測試資料');
       _initializeTestData();
+    }
+  }
+  
+  // 載入本地收藏
+  Future<void> _loadLocalFavorites() async {
+    try {
+      final favoriteIds = await _localStorageService.getFavoriteVideoIds();
+      _cachedFavorites = _cachedVideos.where((video) => 
+        favoriteIds.contains(video.id)
+      ).toList();
+      _favoritesStreamController.add(_cachedFavorites);
+      print('✅ 載入本地收藏 ${_cachedFavorites.length} 個影片');
+    } catch (e) {
+      print('❌ 載入本地收藏失敗: $e');
     }
   }
 
   void _initializeTestData() {
     print('🔧 正在初始化本地測試數據...');
     
-    final testVideos = [
+    final List<VideoModel> testVideos = [
       VideoModel(
         id: 'test_1',
         title: '測試真人影片 1',
-        description: '這是一個測試用的真人影片',
         thumbnailUrl: 'https://via.placeholder.com/300x200/FF6B9D/FFFFFF?text=真人影片1',
         videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
         type: VideoType.real,
-        publishTime: DateTime.now().subtract(const Duration(days: 1)),
+        addedAt: DateTime.now().subtract(const Duration(days: 1)),
       ),
       VideoModel(
         id: 'test_2',
         title: '測試真人影片 2',
-        description: '這是另一個測試用的真人影片',
         thumbnailUrl: 'https://via.placeholder.com/300x200/6C63FF/FFFFFF?text=真人影片2',
         videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
         type: VideoType.real,
-        publishTime: DateTime.now().subtract(const Duration(days: 2)),
+        addedAt: DateTime.now().subtract(const Duration(days: 2)),
       ),
       VideoModel(
         id: 'test_3',
         title: '測試動漫影片 1',
-        description: '這是一個測試用的動漫影片',
         thumbnailUrl: 'https://via.placeholder.com/300x200/4ECDC4/FFFFFF?text=動漫影片1',
         videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
         type: VideoType.anime,
-        publishTime: DateTime.now().subtract(const Duration(days: 3)),
+        addedAt: DateTime.now().subtract(const Duration(days: 3)),
       ),
       VideoModel(
         id: 'test_4',
         title: '測試動漫影片 2',
-        description: '這是另一個測試用的動漫影片',
         thumbnailUrl: 'https://via.placeholder.com/300x200/FF6B9D/FFFFFF?text=動漫影片2',
         videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
         type: VideoType.anime,
-        publishTime: DateTime.now().subtract(const Duration(days: 4)),
+        addedAt: DateTime.now().subtract(const Duration(days: 4)),
       ),
     ];
 
@@ -121,7 +158,7 @@ class VideoRepository {
   Future<void> loadAllVideos() async {
     _setLoading(true);
     try {
-      final videos = await _firebaseService.loadAllVideos();
+      final videos = await _localStorageService.getCachedVideoList();
       _cachedVideos = videos;
       _currentFilter = VideoType.real;
       _videosStreamController.add(_getFilteredVideos());
@@ -136,8 +173,10 @@ class VideoRepository {
   Future<void> loadFavoriteVideos() async {
     _setLoading(true);
     try {
-      final favorites = await _firebaseService.loadFavoriteVideos();
-      _cachedFavorites = favorites;
+      final favorites = await _localStorageService.getFavoriteVideoIds();
+      _cachedFavorites = _cachedVideos.where((video) => 
+        favorites.contains(video.id)
+      ).toList();
       _favoritesStreamController.add(_cachedFavorites);
     } catch (e) {
       print('載入收藏影片失敗: $e');
@@ -150,7 +189,7 @@ class VideoRepository {
   Future<void> loadVideosByType(VideoType type) async {
     _setLoading(true);
     try {
-      final videos = await _firebaseService.loadVideosByType(type);
+      final videos = await _localStorageService.getCachedVideoList();
       _cachedVideos = videos;
       _currentFilter = type;
       _videosStreamController.add(_getFilteredVideos());
@@ -175,14 +214,15 @@ class VideoRepository {
 
   Future<bool> addToFavorites(VideoModel video) async {
     try {
-      final success = await _firebaseService.addToFavorites(video);
-      if (success) {
-        if (!_cachedFavorites.any((v) => v.id == video.id)) {
-          _cachedFavorites.add(video);
-          _favoritesStreamController.add(_cachedFavorites);
-        }
+      // 先更新本地
+      await _localStorageService.addToFavorites(video.id);
+      
+      if (!_cachedFavorites.any((v) => v.id == video.id)) {
+        _cachedFavorites.add(video);
+        _favoritesStreamController.add(_cachedFavorites);
       }
-      return success;
+      
+      return true;
     } catch (e) {
       print('添加到收藏失敗: $e');
       return false;
@@ -191,12 +231,13 @@ class VideoRepository {
 
   Future<bool> removeFromFavorites(String videoId) async {
     try {
-      final success = await _firebaseService.removeFromFavorites(videoId);
-      if (success) {
-        _cachedFavorites.removeWhere((video) => video.id == videoId);
-        _favoritesStreamController.add(_cachedFavorites);
-      }
-      return success;
+      // 先更新本地
+      await _localStorageService.removeFromFavorites(videoId);
+      
+      _cachedFavorites.removeWhere((video) => video.id == videoId);
+      _favoritesStreamController.add(_cachedFavorites);
+      
+      return true;
     } catch (e) {
       print('從收藏移除失敗: $e');
       return false;
@@ -209,7 +250,7 @@ class VideoRepository {
   }
 
   Future<Map<String, dynamic>?> checkForUpdate() async {
-    return await _firebaseService.checkForUpdate();
+    return null;
   }
 
   void updateVideos(List<VideoModel> videos) {
@@ -224,10 +265,77 @@ class VideoRepository {
       return null;
     }
   }
+  
+  // 獲取影片的完整資訊（包含播放路徑）
+  Future<VideoModel?> getVideoWithPlayUrl(String videoId) async {
+    try {
+      // 先從本地獲取基本資訊
+      final localVideo = getVideoById(videoId);
+      if (localVideo == null) {
+        print('❌ 找不到影片: $videoId');
+        return null;
+      }
+      
+      // 如果本地已有播放路徑，直接返回
+      if (localVideo.hasVideoUrl) {
+        return localVideo;
+      }
+      
+      print('⚠️ 無法獲取影片播放路徑，返回本地資訊');
+      return localVideo;
+      
+    } catch (e) {
+      print('❌ 獲取影片播放路徑失敗: $e');
+      return getVideoById(videoId);
+    }
+  }
+  
+  // 檢查是否正在從雲端載入
+  bool get isLoadingFromCloud => _isLoadingFromCloud;
+  
+  // 獲取本地快取統計資訊
+  Future<Map<String, dynamic>> getCacheInfo() async {
+    try {
+      final count = await _localStorageService.getCachedVideoCount();
+      final hasCache = await _localStorageService.hasCachedData();
+      
+      return {
+        'hasCache': hasCache,
+        'videoCount': count,
+        'realCount': _cachedVideos.where((v) => v.type == VideoType.real).length,
+        'animeCount': _cachedVideos.where((v) => v.type == VideoType.anime).length,
+        'favoriteCount': _cachedFavorites.length,
+      };
+    } catch (e) {
+      return {
+        'hasCache': false,
+        'videoCount': 0,
+        'realCount': 0,
+        'animeCount': 0,
+        'favoriteCount': 0,
+      };
+    }
+  }
+  
+  // 清空本地快取
+  Future<void> clearLocalCache() async {
+    try {
+      await _localStorageService.clearCache();
+      _cachedVideos.clear();
+      _cachedFavorites.clear();
+      
+      // 重新初始化測試資料
+      _initializeTestData();
+      
+      print('✅ 本地快取已清空並重新初始化');
+    } catch (e) {
+      print('❌ 清空本地快取失敗: $e');
+    }
+  }
 
   // 載入真人影片
   Future<void> loadRealVideos() async {
-    if (!_firebaseService.isAvailable) {
+    if (!isFirebaseAvailable) {
       // Firebase 不可用時返回測試數據
       final testRealVideos = _cachedVideos.where((v) => v.type == VideoType.real).toList();
       _cache['real'] = testRealVideos;
@@ -236,10 +344,9 @@ class VideoRepository {
     }
 
     try {
-      final snapshot = await _dbRef.child('realVideos').get();
-      final videos = _parseVideosFromSnapshot(snapshot, VideoType.real);
+      final videos = await _localStorageService.getCachedVideoList();
       _cache['real'] = videos;
-      _realVideosController.add(videos);
+      _realVideosController.add(videos.where((v) => v.type == VideoType.real).toList());
     } catch (e) {
       print('載入真人影片失敗: $e');
       _realVideosController.addError(e);
@@ -248,7 +355,7 @@ class VideoRepository {
 
   // 載入動漫影片
   Future<void> loadAnimeVideos() async {
-    if (!_firebaseService.isAvailable) {
+    if (!isFirebaseAvailable) {
       // Firebase 不可用時返回測試數據
       final testAnimeVideos = _cachedVideos.where((v) => v.type == VideoType.anime).toList();
       _cache['anime'] = testAnimeVideos;
@@ -257,10 +364,9 @@ class VideoRepository {
     }
 
     try {
-      final snapshot = await _dbRef.child('animeVideos').get();
-      final videos = _parseVideosFromSnapshot(snapshot, VideoType.anime);
+      final videos = await _localStorageService.getCachedVideoList();
       _cache['anime'] = videos;
-      _animeVideosController.add(videos);
+      _animeVideosController.add(videos.where((v) => v.type == VideoType.anime).toList());
     } catch (e) {
       print('載入動漫影片失敗: $e');
       _animeVideosController.addError(e);
@@ -270,8 +376,7 @@ class VideoRepository {
   // 更新真人影片
   Future<void> updateRealVideos(List<VideoModel> videos) async {
     try {
-      final data = videos.map((v) => v.toMap()).toList();
-      await _dbRef.child('realVideos').set(data);
+      await _localStorageService.cacheVideoList(videos);
       _cache['real'] = videos;
       _realVideosController.add(videos);
     } catch (e) {
@@ -283,8 +388,7 @@ class VideoRepository {
   // 更新動漫影片
   Future<void> updateAnimeVideos(List<VideoModel> videos) async {
     try {
-      final data = videos.map((v) => v.toMap()).toList();
-      await _dbRef.child('animeVideos').set(data);
+      await _localStorageService.cacheVideoList(videos);
       _cache['anime'] = videos;
       _animeVideosController.add(videos);
     } catch (e) {
@@ -293,94 +397,15 @@ class VideoRepository {
     }
   }
 
-  // 從快取獲取真人影片
-  List<VideoModel> getCachedRealVideos() {
-    return _cache['real'] ?? [];
-  }
-
-  // 從快取獲取動漫影片
-  List<VideoModel> getCachedAnimeVideos() {
-    return _cache['anime'] ?? [];
-  }
-
-  // 解析 Firebase 資料
-  List<VideoModel> _parseVideosFromSnapshot(DataSnapshot snapshot, VideoType defaultType) {
-    if (!snapshot.exists) return [];
-
-    final data = snapshot.value;
-    final List<VideoModel> videos = [];
-
-    if (data is List) {
-      for (final item in data) {
-        if (item is Map) {
-          try {
-            final map = Map<String, dynamic>.from(item);
-            
-            // 確保有必要的欄位
-            if (map['title'] != null) {
-              // 設定預設類型
-              if (map['type'] == null) {
-                map['type'] = defaultType.name;
-              }
-              
-              // 兼容舊格式
-              if (map['img_url'] != null && map['thumbnailUrl'] == null) {
-                map['thumbnailUrl'] = map['img_url'];
-              }
-              if (map['detail_url'] != null && map['videoUrl'] == null) {
-                map['videoUrl'] = map['detail_url'];
-              }
-
-              final video = VideoModel.fromMap(map);
-              videos.add(video);
-            }
-          } catch (e) {
-            print('解析影片資料失敗: $e');
-          }
-        }
-      }
-    } else if (data is Map) {
-      for (final value in data.values) {
-        if (value is Map) {
-          try {
-            final map = Map<String, dynamic>.from(value);
-            
-            if (map['title'] != null) {
-              // 設定預設類型
-              if (map['type'] == null) {
-                map['type'] = defaultType.name;
-              }
-              
-              // 兼容舊格式
-              if (map['img_url'] != null && map['thumbnailUrl'] == null) {
-                map['thumbnailUrl'] = map['img_url'];
-              }
-              if (map['detail_url'] != null && map['videoUrl'] == null) {
-                map['videoUrl'] = map['detail_url'];
-              }
-
-              final video = VideoModel.fromMap(map);
-              videos.add(video);
-            }
-          } catch (e) {
-            print('解析影片資料失敗: $e');
-          }
-        }
-      }
-    }
-
-    return videos;
-  }
-
   // 搜尋影片
   List<VideoModel> searchVideos(String query, {VideoType? type}) {
     List<VideoModel> allVideos = [];
     
     if (type == null || type == VideoType.real) {
-      allVideos.addAll(getCachedRealVideos());
+      allVideos.addAll(_cachedVideos.where((v) => v.type == VideoType.real).toList());
     }
     if (type == null || type == VideoType.anime) {
-      allVideos.addAll(getCachedAnimeVideos());
+      allVideos.addAll(_cachedVideos.where((v) => v.type == VideoType.anime).toList());
     }
 
     if (query.isEmpty) return allVideos;
@@ -397,5 +422,9 @@ class VideoRepository {
     _loadingStreamController.close();
     _realVideosController.close();
     _animeVideosController.close();
+  }
+
+  Future<void> crawlAndSaveVideos(VideoType type) async {
+    // Implementation of crawlAndSaveVideos method
   }
 } 

@@ -7,9 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'firebase_options.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -20,6 +17,8 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'crawlers/real_crawler.dart';
 import 'crawlers/anime_crawler.dart';
 import 'core/constants/app_constants.dart';
+import 'services/video_repository.dart';
+import 'shared/models/video_model.dart';
 
 // 背景圖案畫家
 class BackgroundPatternPainter extends CustomPainter {
@@ -210,10 +209,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late final WebViewController _webViewController;
-  DatabaseReference? _dbRef;
-  DatabaseReference? _animeDbRef;
-  DatabaseReference? _favoritesDbRef;
-  bool _isFirebaseAvailable = false;
+  late final VideoRepository _videoRepository;
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _favoriteItems = [];
   bool _isLoading = false;
@@ -245,36 +241,120 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
-    _initializeFirebaseReferences();
+    _initializeServices();
     _showAppVersionToast();
     _initializeWebView();
-    _loadTestData(); // 載入測試數據
     // 初始化選單 FocusNode
-    _menuFocusNodes = List.generate(5, (_) => FocusNode()); // 調整為5個選單項目
+    _menuFocusNodes = List.generate(7, (_) => FocusNode()); // 調整為7個選單項目
   }
 
-  void _initializeFirebaseReferences() {
+  void _initializeServices() async {
     try {
-      _dbRef = FirebaseDatabase.instance.ref().child('videos');
-      _animeDbRef = FirebaseDatabase.instance.ref().child('anime_videos');
-      _favoritesDbRef = FirebaseDatabase.instance.ref().child('favorites');
-      _isFirebaseAvailable = true;
-      print('✅ Firebase 數據庫引用初始化成功');
-      _loadFavoriteVideos(); // 載入Firebase數據
+      // 初始化 VideoRepository
+      _videoRepository = VideoRepository();
+      // 初始化 VideoRepository（載入本地快取）
+      await _videoRepository.initialize();
+      // 監聽影片資料變化
+      _videoRepository.videosStream.listen((videos) {
+        if (mounted) {
+          setState(() {
+            _items = videos.map((video) => video.toMap()).toList();
+          });
+        }
+      });
+      // 監聽收藏資料變化
+      _videoRepository.favoritesStream.listen((favorites) {
+        if (mounted) {
+          setState(() {
+            _favoriteItems = favorites.map((video) => video.toMap()).toList();
+          });
+        }
+      });
+      // 監聽載入狀態變化
+      _videoRepository.loadingStream.listen((isLoading) {
+        if (mounted) {
+          setState(() {
+            _isLoading = isLoading;
+          });
+        }
+      });
+      print('✅ VideoRepository 初始化成功');
     } catch (e) {
-      print('⚠️ Firebase 數據庫不可用，使用本地測試數據: $e');
-      _isFirebaseAvailable = false;
+      print('❌ VideoRepository 初始化失敗: $e');
     }
   }
 
-  void _loadTestData() {
-    // 移除測試數據，確保僅使用雲端數據
-    if (!_isFirebaseAvailable) {
-      print('⚠️ Firebase不可用，無法載入影片清單');
+  // 從雲端更新資料
+  Future<void> _updateFromCloud() async {
+    try {
       setState(() {
-        _items = [];
-        _favoriteItems = [];
+        _isLoading = true;
+        _statusMessage = '正在從雲端更新資料...';
       });
+      
+      await _videoRepository.updateFromCloud();
+      
+      _showToast('✅ 雲端資料更新完成');
+    } catch (e) {
+      print('❌ 雲端更新失敗: $e');
+      _showToast('❌ 雲端更新失敗: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _statusMessage = '準備就緒';
+        });
+      }
+    }
+  }
+  
+  // 顯示快取資訊
+  Future<void> _showCacheInfo() async {
+    try {
+      final cacheInfo = await _videoRepository.getCacheInfo();
+      
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('本地快取資訊'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('有快取資料: ${cacheInfo['hasCache'] ? '是' : '否'}'),
+              Text('總影片數: ${cacheInfo['videoCount']}'),
+              Text('真人影片: ${cacheInfo['realCount']}'),
+              Text('動畫影片: ${cacheInfo['animeCount']}'),
+              Text('收藏影片: ${cacheInfo['favoriteCount']}'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('確定'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _clearLocalCache();
+              },
+              child: const Text('清空快取'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      _showToast('取得快取資訊失敗: $e');
+    }
+  }
+  
+  // 清空本地快取
+  Future<void> _clearLocalCache() async {
+    try {
+      await _videoRepository.clearLocalCache();
+      _showToast('✅ 本地快取已清空');
+    } catch (e) {
+      _showToast('❌ 清空快取失敗: $e');
     }
   }
 
@@ -296,176 +376,10 @@ class _MyHomePageState extends State<MyHomePage> {
     try {
       final info = await PackageInfo.fromPlatform();
       final localVersion = info.version;
-      final ref = FirebaseDatabase.instance.ref();
-      final snapshot = await ref.child('latest_version_info').get();
-      if (snapshot.exists) {
-        final data = Map<String, dynamic>.from(snapshot.value as Map);
-        final latestVersion = data['latest_version'] ?? '';
-        // 使用固定的 GitHub APK 下載連結
-        final apkUrl = AppConstants.apkDownloadUrl;
-        if (latestVersion != '' &&
-            latestVersion != localVersion &&
-            apkUrl != '') {
-          if (!mounted) return;
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (ctx) => StatefulBuilder(
-              builder: (context, setStateDialog) {
-                return AlertDialog(
-                  title: const Text('有新版本可用'),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                          '目前版本：$localVersion\n最新版本：$latestVersion\n請下載最新版以獲得最佳體驗。'),
-                      if (_apkDownloadProgress != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16.0),
-                          child: Column(
-                            children: [
-                              LinearProgressIndicator(
-                                  value: _apkDownloadProgress),
-                              const SizedBox(height: 8),
-                              Text(_apkDownloadStatus ?? '',
-                                  style: const TextStyle(fontSize: 14)),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                  actions: [
-                    if (_apkFilePath != null)
-                      TextButton(
-                        onPressed: () async {
-                          Navigator.pop(ctx);
-                          try {
-                            if (_apkFilePath == null) {
-                              _showToast('找不到更新檔案');
-                              return;
-                            }
-
-                            // 檢查檔案是否存在
-                            final apkFile = File(_apkFilePath!);
-                            if (!await apkFile.exists()) {
-                              print('[APK安裝] 檔案不存在: ${apkFile.path}');
-                              _showToast('檔案不存在，請重新下載');
-                              return;
-                            }
-
-                            print('[APK安裝] 開啟檔案: ${apkFile.path}');
-
-                            // 使用 Android Intent 直接安裝
-                            if (Platform.isAndroid) {
-                              const platform = MethodChannel('install_apk');
-                              try {
-                                await platform.invokeMethod('installApk', {
-                                  'filePath': apkFile.path,
-                                });
-                              } catch (e) {
-                                print('[APK安裝] Intent 方式失敗，嘗試 OpenFile: $e');
-                                // fallback 到原本方式
-                                final result =
-                                    await OpenFile.open(apkFile.path);
-                                print('[APK安裝] OpenFile 結果: ${result.message}');
-                                if (result.type != ResultType.done) {
-                                  _showToast('開啟失敗: ${result.message}');
-                                }
-                              }
-                            } else {
-                              final result = await OpenFile.open(apkFile.path);
-                              print('[APK安裝] 開啟結果: ${result.message}');
-                              if (result.type != ResultType.done) {
-                                _showToast('開啟失敗: ${result.message}');
-                              }
-                            }
-                          } catch (e) {
-                            print('[APK安裝] 錯誤: $e');
-                            _showToast('開啟失敗: $e');
-                          }
-                        },
-                        child: const Text('安裝/開啟'),
-                      ),
-                    if (_apkDownloadProgress == null ||
-                        _apkDownloadProgress! < 1)
-                      TextButton(
-                        onPressed: () async {
-                          print('[APK下載] 開始下載...');
-
-                          setStateDialog(() {
-                            _apkDownloadProgress = 0;
-                            _apkDownloadStatus = '開始下載...';
-                          });
-
-                          try {
-                            // 使用 getExternalStorageDirectory 來獲取下載目錄
-                            final dir = await getExternalStorageDirectory();
-                            if (dir == null) {
-                              throw Exception('無法獲取儲存空間');
-                            }
-
-                            // 確保目錄存在
-                            if (!await dir.exists()) {
-                              await dir.create(recursive: true);
-                            }
-
-                            final filePath = '${dir.path}/update.apk';
-                            print('[APK下載] 準備下載到: $filePath');
-
-                            final dio = Dio();
-                            await dio.download(
-                              apkUrl,
-                              filePath,
-                              onReceiveProgress: (received, total) {
-                                if (total != -1) {
-                                  final percent = (100 * received / total)
-                                      .toStringAsFixed(0);
-                                  print(
-                                      '[APK下載] 進度: $received/$total ($percent%)');
-                                  setStateDialog(() {
-                                    _apkDownloadProgress = received / total;
-                                    _apkDownloadStatus = '下載中 $percent%';
-                                  });
-                                }
-                              },
-                            );
-
-                            // 檢查檔案是否真的存在
-                            final file = File(filePath);
-                            final exists = await file.exists();
-                            final size = exists ? await file.length() : 0;
-                            print(
-                                '[APK下載] 下載完成 檔案存在: $exists 大小: ${size}bytes 路徑: $filePath');
-
-                            setStateDialog(() {
-                              _apkDownloadProgress = 1;
-                              _apkDownloadStatus =
-                                  exists ? '下載完成' : '下載失敗：檔案不存在';
-                              _apkFilePath = exists ? filePath : null;
-                            });
-                          } catch (e) {
-                            print('[APK下載] 下載失敗: $e');
-                            setStateDialog(() {
-                              _apkDownloadProgress = null;
-                              _apkDownloadStatus = '下載失敗: $e';
-                            });
-                          }
-                        },
-                        child: const Text('下載新版'),
-                      ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('稍後'),
-                    ),
-                  ],
-                );
-              },
-            ),
-          );
-        }
-      }
+      // 這裡移除 FirebaseDatabase 相關邏輯，僅顯示本地版本
+      _showToast('目前版本：$localVersion');
     } catch (e) {
-      // 忽略錯誤，不影響主流程
+      _showToast('檢查更新失敗: $e');
     }
   }
 
@@ -485,253 +399,42 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       );
 
-    if (_isFirebaseAvailable && _dbRef != null && _animeDbRef != null) {
-      _realCrawler = RealCrawler(
-        webViewController: _webViewController,
-        dbRef: _dbRef!,
-        onLoadingChange: (isLoading) {
-          setState(() {
-            _isLoading = isLoading;
-          });
-        },
-        onStatusChange: (status) {
-          setState(() {
-            _statusMessage = status;
-          });
-        },
-        onDataUpdate: (items) {
-          setState(() {
-            _items = items;
-          });
-        },
-      );
-
-      _animeCrawler = AnimeCrawler(
-        webViewController: _webViewController,
-        dbRef: _animeDbRef!,
-        onLoadingChange: (isLoading) {
-          setState(() {
-            _isLoading = isLoading;
-          });
-        },
-        onStatusChange: (status) {
-          setState(() {
-            _statusMessage = status;
-          });
-        },
-        onDataUpdate: (items) {
-          setState(() {
-            _items = items;
-          });
-        },
-      );
+    // 初始化爬蟲（只有在有 Firebase 服務時才初始化）
+    if (_videoRepository.isFirebaseAvailable) {
+      final dbRef = FirebaseDatabase.instance.ref().child('videos');
+      final animeDbRef = FirebaseDatabase.instance.ref().child('anime_videos');
+      
+      _realCrawler = RealCrawler(webViewController: _webViewController);
+      _animeCrawler = AnimeCrawler(webViewController: _webViewController);
     } else {
       print('⚠️ Firebase不可用，爬蟲功能將被禁用');
     }
   }
 
-  Future<void> _loadFavoriteVideos() async {
-    if (!_isFirebaseAvailable || _favoritesDbRef == null) {
-      print('⚠️ Firebase不可用，使用本地收藏數據');
-      return;
-    }
-    
-    // 顯示全螢幕 loading 動畫
-    setState(() {
-      _isShowingLoadingTransition = true;
-      _loadingMessage = '正在載入收藏影片列表...';
-    });
 
-    final snapshot = await _favoritesDbRef!.get();
-    final data = snapshot.value;
-    if (data is List) {
-      setState(() {
-        _favoriteItems = data
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList();
-      });
-    } else if (data is Map) {
-      setState(() {
-        _favoriteItems = (data)
-            .values
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-      });
-    }
-
-    // 設置當前顯示的項目
-    setState(() {
-      _items = _favoriteItems;
-      _isShowingLoadingTransition = false;
-    });
-  }
-
-  Future<void> _loadAllVideos() async {
-    if (!_isFirebaseAvailable || _dbRef == null || _animeDbRef == null) {
-      print('⚠️ Firebase不可用，無法載入影片列表');
-      setState(() {
-        _items = [];
-      });
-      return;
-    }
-    
-    setState(() {
-      _isShowingLoadingTransition = true;
-      _loadingMessage = '正在載入影片列表...';
-    });
-
-    // 同時載入真人影片和動畫影片
-    final realSnapshot = await _dbRef!.get();
-    final animeSnapshot = await _animeDbRef!.get();
-
-    List<Map<String, dynamic>> allVideos = [];
-
-    // 處理真人影片
-    if (realSnapshot.exists) {
-      final data = realSnapshot.value;
-      if (data is List) {
-        allVideos.addAll(data
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList());
-      } else if (data is Map) {
-        allVideos.addAll((data)
-            .values
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList());
-      }
-    }
-
-    // 處理動畫影片
-    if (animeSnapshot.exists) {
-      final data = animeSnapshot.value;
-      if (data is List) {
-        allVideos.addAll(data
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList());
-      } else if (data is Map) {
-        allVideos.addAll((data)
-            .values
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList());
-      }
-    }
-
-    setState(() {
-      _items = allVideos;
-      _isShowingLoadingTransition = false;
-    });
-  }
-
-  Future<void> _loadRealVideos() async {
-    if (!_isFirebaseAvailable || _dbRef == null) {
-      print('⚠️ Firebase不可用，無法載入真人影片');
-      return;
-    }
-    
-    setState(() {
-      _isShowingLoadingTransition = true;
-      _loadingMessage = '正在載入真人影片列表...';
-    });
-
-    final realSnapshot = await _dbRef!.get();
-    List<Map<String, dynamic>> realVideos = [];
-
-    // 只處理真人影片
-    if (realSnapshot.exists) {
-      final data = realSnapshot.value;
-      if (data is List) {
-        realVideos.addAll(data
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList());
-      } else if (data is Map) {
-        realVideos.addAll((data)
-            .values
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList());
-      }
-    }
-
-    setState(() {
-      _items = realVideos;
-      _isShowingLoadingTransition = false;
-    });
-  }
-
-  Future<void> _loadAnimeVideos() async {
-    if (!_isFirebaseAvailable || _animeDbRef == null) {
-      print('⚠️ Firebase不可用，無法載入動畫影片');
-      return;
-    }
-    
-    setState(() {
-      _isShowingLoadingTransition = true;
-      _loadingMessage = '正在載入動畫影片列表...';
-    });
-
-    final animeSnapshot = await _animeDbRef!.get();
-    List<Map<String, dynamic>> animeVideos = [];
-
-    // 只處理動畫影片
-    if (animeSnapshot.exists) {
-      final data = animeSnapshot.value;
-      if (data is List) {
-        animeVideos.addAll(data
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList());
-      } else if (data is Map) {
-        animeVideos.addAll((data)
-            .values
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList());
-      }
-    }
-
-    setState(() {
-      _items = animeVideos;
-      _isShowingLoadingTransition = false;
-    });
-  }
 
   Future<void> _toggleFavorite(Map<String, dynamic> video) async {
     final videoId = video['id']?.toString() ?? video['title'];
-    final isCurrentlyFavorite = _isVideoFavorite(video);
+    final isCurrentlyFavorite = _videoRepository.isFavorite(videoId);
 
     try {
       if (isCurrentlyFavorite) {
         // 移除收藏
-        if (_isFirebaseAvailable && _favoritesDbRef != null) {
-          await _favoritesDbRef!.child(videoId).remove();
+        final success = await _videoRepository.removeFromFavorites(videoId);
+        if (success) {
+          _showToast('已取消收藏');
+        } else {
+          _showToast('取消收藏失敗');
         }
-        setState(() {
-          _favoriteItems.removeWhere(
-              (item) => (item['id']?.toString() ?? item['title']) == videoId);
-          if (_showFavoritesOnly) {
-            _items = _favoriteItems;
-          }
-        });
-        _showToast('已取消收藏');
       } else {
         // 添加收藏
-        if (_isFirebaseAvailable && _favoritesDbRef != null) {
-          await _favoritesDbRef!.child(videoId).set(video);
+        final videoModel = VideoModel.fromMap(video);
+        final success = await _videoRepository.addToFavorites(videoModel);
+        if (success) {
+          _showToast('已添加到收藏');
+        } else {
+          _showToast('添加收藏失敗');
         }
-        setState(() {
-          _favoriteItems.add(video);
-          if (_showFavoritesOnly) {
-            _items = _favoriteItems;
-          }
-        });
-        _showToast('已添加到收藏');
       }
     } catch (e) {
       _showToast('操作失敗: $e');
@@ -740,8 +443,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   bool _isVideoFavorite(Map<String, dynamic> video) {
     final videoId = video['id']?.toString() ?? video['title'];
-    return _favoriteItems
-        .any((item) => (item['id']?.toString() ?? item['title']) == videoId);
+    return _videoRepository.isFavorite(videoId);
   }
 
   void _toggleDisplayMode() {
@@ -751,7 +453,7 @@ class _MyHomePageState extends State<MyHomePage> {
         _items = _favoriteItems;
         _showToast('顯示收藏影片');
       } else {
-        _loadAllVideos();
+        // 切換到顯示全部影片，資料由 VideoRepository 流提供
         _showToast('顯示全部影片');
       }
     });
@@ -784,8 +486,8 @@ class _MyHomePageState extends State<MyHomePage> {
       _showFavoritesOnly = false; // 切換到顯示全部影片模式
     });
 
-    // 載入真人影片（只顯示真人影片）
-    await _loadRealVideos();
+    // 切換到顯示真人影片
+    _videoRepository.filterVideos(VideoType.real);
 
     // 重新觸發 setState 來更新圖片比例
     setState(() {});
@@ -808,8 +510,8 @@ class _MyHomePageState extends State<MyHomePage> {
       _showFavoritesOnly = false; // 切換到顯示全部影片模式
     });
 
-    // 載入動畫影片（只顯示動畫影片）
-    await _loadAnimeVideos();
+    // 切換到顯示動畫影片
+    _videoRepository.filterVideos(VideoType.anime);
 
     // 重新觸發 setState 來更新圖片比例
     setState(() {});
@@ -838,22 +540,60 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _playVideoDirectly(Map<String, dynamic> video) async {
     if (_isVideoLoading) return;
+    
     setState(() {
       _isVideoLoading = true;
+      _statusMessage = '正在獲取播放路徑...';
     });
-    final detailUrl = video['detail_url'] as String?;
-    if (detailUrl == null || detailUrl.isEmpty) {
-      _showToast('沒有找到影片詳細頁面');
-      setState(() {
-        _isVideoLoading = false;
-      });
-      return;
-    }
+    
     try {
+      final videoId = video['id'] as String?;
+      if (videoId == null || videoId.isEmpty) {
+        _showToast('影片ID錯誤');
+        return;
+      }
+      
+      // 使用新的架構獲取完整影片資訊（包含播放路徑）
+      final videoWithUrl = await _videoRepository.getVideoWithPlayUrl(videoId);
+      
+      if (videoWithUrl == null) {
+        _showToast('無法取得影片資訊');
+        return;
+      }
+      
+      // 如果有播放路徑，直接播放
+      if (videoWithUrl.hasVideoUrl) {
+        final isAnime = videoWithUrl.type == VideoType.anime;
+        
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerScreen(
+              title: videoWithUrl.title,
+              url: videoWithUrl.videoUrl!,
+              isAnime: isAnime,
+            ),
+          ),
+        );
+        return;
+      }
+      
+      // 如果沒有播放路徑，嘗試爬蟲獲取
+      final detailUrl = video['detail_url'] as String? ?? video['videoUrl'] as String?;
+      if (detailUrl == null || detailUrl.isEmpty) {
+        _showToast('沒有找到影片詳細頁面');
+        return;
+      }
+      
+      setState(() {
+        _statusMessage = '正在解析播放地址...';
+      });
+      
       await _webViewController.loadRequest(Uri.parse(detailUrl));
       await Future.delayed(const Duration(seconds: 3));
+      
       String? playUrl;
-      bool isAnime = detailUrl.contains('hanime1.me');
+      bool isAnime = detailUrl.contains('hanime1.me') || videoWithUrl.type == VideoType.anime;
 
       if (isAnime) {
         playUrl = await _animeCrawler.extractPlayUrl();
@@ -862,13 +602,12 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       if (playUrl != null && playUrl.isNotEmpty) {
-        // 導覽到播放器頁面（統一處理，不需要分別判斷影片類型）
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => VideoPlayerScreen(
-              title: video['title'] as String,
-              url: playUrl!, // 使用非空斷言，因為已經檢查過不為null
+              title: videoWithUrl.title,
+              url: playUrl!,
               isAnime: isAnime,
             ),
           ),
@@ -913,11 +652,16 @@ class _MyHomePageState extends State<MyHomePage> {
         }
       }
     } catch (e) {
-      _showToast('載入失敗: $e');
+      print('❌ 播放影片失敗: $e');
+      _showToast('播放失敗: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isVideoLoading = false;
+          _statusMessage = '準備就緒';
+        });
+      }
     }
-    setState(() {
-      _isVideoLoading = false;
-    });
   }
 
   Future<void> _downloadVideo(String url, String fileName) async {
@@ -2146,6 +1890,35 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
                     const SizedBox(height: 20),
                     _buildModernMenuTile(
+                      icon: Icons.cloud_download_rounded,
+                      title: '雲端更新',
+                      subtitle: '從雲端更新影片列表',
+                      gradient: const LinearGradient(
+                          colors: [Colors.blue, Colors.lightBlue]),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _updateFromCloud();
+                      },
+                      focusNode: _menuFocusNodes[3],
+                      autofocus: false,
+                      theme: theme,
+                    ),
+                    _buildModernMenuTile(
+                      icon: Icons.storage_rounded,
+                      title: '快取管理',
+                      subtitle: '查看和管理本地快取',
+                      gradient: const LinearGradient(
+                          colors: [Colors.teal, Colors.cyan]),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showCacheInfo();
+                      },
+                      focusNode: _menuFocusNodes[4],
+                      autofocus: false,
+                      theme: theme,
+                    ),
+                    const SizedBox(height: 20),
+                    _buildModernMenuTile(
                       icon: Icons.system_update_rounded,
                       title: '軟體更新',
                       subtitle: '檢查並下載最新版本',
@@ -2155,7 +1928,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         Navigator.pop(context);
                         _checkForUpdate();
                       },
-                      focusNode: _menuFocusNodes[3],
+                      focusNode: _menuFocusNodes[5],
                       autofocus: false,
                       theme: theme,
                     ),
@@ -2169,7 +1942,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         Navigator.pop(context);
                         _showExitAppDialog();
                       },
-                      focusNode: _menuFocusNodes[4],
+                      focusNode: _menuFocusNodes[6], // 注意：需要增加到7個
                       autofocus: false,
                       theme: theme,
                     ),
@@ -2396,7 +2169,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   // Firebase 參考
   DatabaseReference? _dbRef;
   DatabaseReference? _animeDbRef;
-  bool _isFirebaseAvailable = false;
 
   @override
   void initState() {
@@ -2413,11 +2185,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     try {
       _dbRef = FirebaseDatabase.instance.ref('videos');
       _animeDbRef = FirebaseDatabase.instance.ref('anime_videos');
-      _isFirebaseAvailable = true;
       print('✅ 播放器Firebase初始化成功');
     } catch (e) {
       print('⚠️ 播放器Firebase不可用: $e');
-      _isFirebaseAvailable = false;
     }
   }
 
@@ -2430,15 +2200,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     setState(() {
       _isLoadingRecommendations = true;
     });
-
-    if (!_isFirebaseAvailable) {
-      print('⚠️ Firebase不可用，無法載入推薦影片');
-      setState(() {
-        _recommendedVideos = [];
-        _isLoadingRecommendations = false;
-      });
-      return;
-    }
 
     try {
       if (widget.isAnime) {
@@ -2538,7 +2299,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // 從Firebase中找到對應的影片詳細頁面URL
   Future<String?> _findVideoDetailUrl(String title) async {
-    if (!_isFirebaseAvailable || _dbRef == null) {
+    if (_dbRef == null) {
       print('⚠️ Firebase不可用，無法查找影片詳細URL');
       return null;
     }
@@ -2797,7 +2558,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // 載入隨機真人影片推薦（僅使用雲端數據）
   Future<void> _loadRandomRealRecommendations() async {
-    if (!_isFirebaseAvailable || _dbRef == null) {
+    if (_dbRef == null) {
       print('⚠️ Firebase不可用，無法載入推薦影片');
       setState(() {
         _recommendedVideos = [];
@@ -2844,7 +2605,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // 載入隨機動畫推薦（僅使用雲端數據）
   Future<void> _loadRandomAnimeRecommendations() async {
-    if (!_isFirebaseAvailable || _animeDbRef == null) {
+    if (_animeDbRef == null) {
       print('⚠️ Firebase不可用，無法載入動畫推薦');
       setState(() {
         _recommendedVideos = [];

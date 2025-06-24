@@ -1,13 +1,8 @@
 import 'dart:convert';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:firebase_database/firebase_database.dart';
 
 class AnimeCrawler {
   final WebViewController webViewController;
-  final DatabaseReference dbRef;
-  final Function(bool) onLoadingChange;
-  final Function(String) onStatusChange;
-  final Function(List<Map<String, dynamic>>) onDataUpdate;
 
   // 新增：追蹤當前頁面和已有影片
   int currentPage = 1;
@@ -16,23 +11,16 @@ class AnimeCrawler {
 
   AnimeCrawler({
     required this.webViewController,
-    required this.dbRef,
-    required this.onLoadingChange,
-    required this.onStatusChange,
-    required this.onDataUpdate,
   });
 
   Future<void> startCrawling({bool isBackgroundUpdate = false}) async {
     if (!isBackgroundUpdate) {
-      onLoadingChange(true);
       currentPage = 1;
       // 載入現有資料
       await _loadExistingData();
     } else {
       _isBackgroundCrawling = true;
     }
-
-    onStatusChange('正在載入動畫網站第 $currentPage 頁...');
 
     try {
       final url = 'https://hanime1.me/search?genre=裏番&page=$currentPage';
@@ -44,10 +32,8 @@ class AnimeCrawler {
       await extractVideoData();
     } catch (e) {
       if (!isBackgroundUpdate) {
-        onLoadingChange(false);
+        _isBackgroundCrawling = false;
       }
-      _isBackgroundCrawling = false;
-      onStatusChange('載入失敗: $e');
     }
   }
 
@@ -86,7 +72,6 @@ class AnimeCrawler {
   Future<void> extractVideoData() async {
     final isBackground = _isBackgroundCrawling;
     print('🔥 動畫爬蟲開始執行 extractVideoData，第 $currentPage 頁');
-    onStatusChange('正在抓取第 $currentPage 頁動畫資料...');
 
     try {
       print('🔥 準備執行 JavaScript 爬蟲邏輯');
@@ -178,22 +163,14 @@ class AnimeCrawler {
           }
 
           print(
-              '🔥 準備更新 Firebase，新增影片數量: ${filteredItems.length}，總數: ${_allVideos.length}');
-
-          onDataUpdate(_allVideos);
-          await dbRef.set(_allVideos);
-
-          onStatusChange(
-              '第 $currentPage 頁：新增 ${filteredItems.length} 個動畫，總計 ${_allVideos.length} 個');
-          print('🔥 Firebase 更新成功！');
+              '🔥 準備更新，新增影片數量: ${filteredItems.length}，總數: ${_allVideos.length}');
         } else {
-          onStatusChange('第 $currentPage 頁：沒有發現新動畫');
+          print('🔥 第 $currentPage 頁：沒有發現新動畫');
         }
 
         if (!isBackground) {
-          onLoadingChange(false);
+          _isBackgroundCrawling = false;
         }
-        _isBackgroundCrawling = false;
       } else {
         print('🔥 JavaScript 返回失敗，嘗試替代方法');
         await _tryAlternativeMethod();
@@ -201,17 +178,13 @@ class AnimeCrawler {
     } catch (e) {
       print('🔥 JavaScript 執行失敗: $e');
       if (!isBackground) {
-        onLoadingChange(false);
+        _isBackgroundCrawling = false;
       }
-      _isBackgroundCrawling = false;
-      onStatusChange('第 $currentPage 頁抓取錯誤: $e');
       await _tryAlternativeMethod();
     }
   }
 
   Future<void> _tryAlternativeMethod() async {
-    onStatusChange('嘗試替代方法抓取資料...');
-
     try {
       final result = await webViewController.runJavaScriptReturningResult('''
         (function() {
@@ -328,41 +301,23 @@ class AnimeCrawler {
         if (items.isEmpty) {
           await _tryFinalMethod();
         } else {
-          print('🔥 替代方法準備更新 Firebase，影片數量: ${items.length}');
+          print('🔥 替代方法準備更新，影片數量: ${items.length}');
           print('🔥 第一個影片: ${items.first}');
-          onDataUpdate(items);
-          onLoadingChange(false);
-          onStatusChange('使用替代方法成功抓取 ${items.length} 個影片');
-          try {
-            await dbRef.set(items);
-            print('🔥 替代方法 Firebase 更新成功！');
-          } catch (e) {
-            print('🔥 替代方法 Firebase 更新失敗: $e');
-            onStatusChange('替代方法 Firebase 更新失敗: $e');
-          }
+          await _tryFinalMethod();
         }
       } else {
         await _tryFinalMethod();
       }
     } catch (e) {
-      onLoadingChange(false);
-      onStatusChange('替代方法失敗: $e');
       await _tryFinalMethod();
     }
   }
 
   Future<void> _tryFinalMethod() async {
-    onStatusChange('使用最終方法抓取資料...');
-
     try {
       // 創建一些測試資料，確保至少有一些內容
       // 移除測試數據，只有無法抓取時才顯示空列表
-      onDataUpdate([]);
-      onLoadingChange(false);
-      onStatusChange('無法抓取動畫列表，請檢查網路連接或稍後再試');
     } catch (e) {
-      onLoadingChange(false);
-      onStatusChange('所有方法都失敗了: $e');
     }
   }
 

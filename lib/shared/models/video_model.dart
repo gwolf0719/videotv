@@ -63,7 +63,7 @@ class VideoModel {
       title: map['title']?.toString() ?? '',
       thumbnailUrl: map['thumbnailUrl']?.toString() ?? map['img_url']?.toString(),
       videoUrl: map['videoUrl']?.toString() ?? map['detail_url']?.toString(),
-      type: _parseVideoType(map['type']?.toString()),
+      type: parseVideoType(map['type']?.toString()),
       addedAt: map['addedAt'] != null ? DateTime.tryParse(map['addedAt'].toString()) : null,
       metadata: map['metadata'] is Map<String, dynamic> ? map['metadata'] : null,
     );
@@ -83,7 +83,7 @@ class VideoModel {
   }
 
   // 解析影片類型
-  static VideoType? _parseVideoType(String? typeString) {
+  static VideoType? parseVideoType(String? typeString) {
     if (typeString == null) return null;
     
     switch (typeString.toLowerCase()) {
