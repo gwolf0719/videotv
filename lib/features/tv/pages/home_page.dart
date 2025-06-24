@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../services/video_repository.dart';
-import '../../../services/firebase_service.dart';
-import '../../../shared/models/video_model.dart';
 import '../widgets/video_grid.dart';
 import '../widgets/control_panel.dart';
 import '../widgets/search_bar.dart';
@@ -11,12 +9,10 @@ import '../../../shared/widgets/background_pattern_widget.dart';
 
 class HomePage extends StatefulWidget {
   final VideoRepository videoRepository;
-  final FirebaseService firebaseService;
 
   const HomePage({
     super.key,
     required this.videoRepository,
-    required this.firebaseService,
   });
 
   @override
@@ -182,7 +178,6 @@ class _HomePageState extends State<HomePage> {
                       onFilterChanged: _onFilterChanged,
                       isFocused: _isControlPanelFocused,
                       videoRepository: widget.videoRepository,
-                      firebaseService: widget.firebaseService,
                     ),
                   ),
                   

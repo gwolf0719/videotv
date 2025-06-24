@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:video_player/video_player.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../../shared/models/video_model.dart';
 import '../../../core/constants/app_constants.dart';
@@ -46,9 +45,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   // 推薦影片相關
   List<VideoModel> _recommendedVideos = [];
   int _selectedRecommendedIndex = 0;
-  final VideoRepository _videoRepository = VideoRepository(
-    FirebaseDatabase.instance.ref(),
-  );
+  final VideoRepository _videoRepository = VideoRepository();
 
   @override
   void initState() {
@@ -102,17 +99,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   Future<void> _loadRecommendedVideos() async {
     try {
-      await _videoRepository.initialize();
-      final allVideos = _videoRepository.cachedVideos;
-      if (allVideos.isNotEmpty) {
-        final videos = allVideos
-            .where((v) => v.id != widget.video.id)
-            .take(6)
-            .toList();
-        setState(() {
-          _recommendedVideos = videos;
-        });
-      }
+      final videos = await _videoRepository.getRecommendedVideos(widget.video.id, 6);
+      setState(() {
+        _recommendedVideos = videos;
+      });
     } catch (e) {
       print('載入推薦影片失敗: $e');
     }

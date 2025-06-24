@@ -1,13 +1,8 @@
 import 'dart:convert';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'package:firebase_database/firebase_database.dart';
 
 class RealCrawler {
   final WebViewController webViewController;
-  final DatabaseReference dbRef;
-  final Function(bool) onLoadingChange;
-  final Function(String) onStatusChange;
-  final Function(List<Map<String, dynamic>>) onDataUpdate;
 
   // 新增：追蹤當前頁面和已有影片
   int currentPage = 1; // 改為公開變數
@@ -16,23 +11,14 @@ class RealCrawler {
 
   RealCrawler({
     required this.webViewController,
-    required this.dbRef,
-    required this.onLoadingChange,
-    required this.onStatusChange,
-    required this.onDataUpdate,
   });
 
   Future<void> startCrawling({bool isBackgroundUpdate = false}) async {
     if (!isBackgroundUpdate) {
-      onLoadingChange(true);
       currentPage = 1;
-      // 載入現有資料
-      await _loadExistingData();
     } else {
       _isBackgroundCrawling = true;
     }
-
-    onStatusChange('正在載入網站第 $currentPage 頁...');
 
     try {
       await webViewController.loadRequest(
@@ -40,34 +26,8 @@ class RealCrawler {
       );
     } catch (e) {
       if (!isBackgroundUpdate) {
-        onLoadingChange(false);
+        _isBackgroundCrawling = false;
       }
-      _isBackgroundCrawling = false;
-      onStatusChange('載入失敗: $e');
-    }
-  }
-
-  // 新增：載入現有資料
-  Future<void> _loadExistingData() async {
-    try {
-      final snapshot = await dbRef.get();
-      if (snapshot.exists) {
-        final data = snapshot.value;
-        if (data is List) {
-          _allVideos = data
-              .whereType<Map>()
-              .map((e) => e.cast<String, dynamic>())
-              .toList();
-        } else if (data is Map) {
-          _allVideos = data.values
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-      }
-    } catch (e) {
-      print('載入現有資料失敗: $e');
-      _allVideos = [];
     }
   }
 
@@ -79,9 +39,8 @@ class RealCrawler {
     await startCrawling(isBackgroundUpdate: true);
   }
 
-  Future<void> extractVideoData() async {
+  Future<List<Map<String, dynamic>>> extractVideoData() async {
     final isBackground = _isBackgroundCrawling;
-    onStatusChange('正在抓取第 $currentPage 頁影片資料...');
 
     try {
       final result = await webViewController.runJavaScriptReturningResult('''
@@ -128,8 +87,8 @@ class RealCrawler {
         print('❌ JSON解析失敗: $e');
         print('🐛 原始結果: $resultString');
         
-        // 嘗試直接使用結果（如果它已經是 Map）
-        if (result is Map) {
+        // 嘗試直接使用結果（如果它已經是 List）
+        if (result is List) {
           data = result;
         } else {
           throw Exception('無法解析 JavaScript 返回的資料');
@@ -161,29 +120,24 @@ class RealCrawler {
             _allVideos = _allVideos.take(200).toList();
           }
 
-          onDataUpdate(_allVideos);
-          await dbRef.set(_allVideos);
-
-          onStatusChange(
-              '第 $currentPage 頁：新增 ${filteredItems.length} 個影片，總計 ${_allVideos.length} 個');
+          print('第 $currentPage 頁：新增 ${filteredItems.length} 個影片，總計 ${_allVideos.length} 個');
         } else {
-          onStatusChange('第 $currentPage 頁：沒有發現新影片');
+          print('第 $currentPage 頁：沒有發現新影片');
         }
 
         if (!isBackground) {
-          onLoadingChange(false);
+          _isBackgroundCrawling = false;
         }
-        _isBackgroundCrawling = false;
       } else {
         throw Exception('抓取失敗');
       }
     } catch (e) {
       if (!isBackground) {
-        onLoadingChange(false);
+        _isBackgroundCrawling = false;
       }
-      _isBackgroundCrawling = false;
-      onStatusChange('第 $currentPage 頁抓取錯誤: $e');
     }
+
+    return _allVideos;
   }
 
   Future<String?> extractPlayUrl() async {
@@ -272,7 +226,7 @@ class RealCrawler {
 
   Future<Map<String, String>?> extractActressInfo() async {
     try {
-      onStatusChange('🔍 正在尋找女優連結...');
+      print('🔍 正在尋找女優連結...');
       
       final result = await webViewController.runJavaScriptReturningResult('''
         (function() {
@@ -346,7 +300,7 @@ class RealCrawler {
       } catch (e) {
         print('❌ JSON解析失敗: $e');
         print('🐛 原始結果: $resultString');
-        onStatusChange('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
+        print('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
         return null;
       }
 
@@ -361,11 +315,11 @@ class RealCrawler {
           'name': actressName,
         };
       } else {
-        onStatusChange('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
+        print('❌ 無法找到女優連結，可能是無女優影片或頁面結構改變');
         return null;
       }
     } catch (e) {
-      onStatusChange('❌ 搜尋女優連結時發生錯誤: $e');
+      print('❌ 搜尋女優連結時發生錯誤: $e');
       return null;
     }
   }

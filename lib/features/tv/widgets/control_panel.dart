@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../shared/models/video_model.dart';
 import '../../../services/video_repository.dart';
-import '../../../services/firebase_service.dart';
 
 class ControlPanel extends StatelessWidget {
   final FocusNode focusNode;
@@ -10,7 +9,6 @@ class ControlPanel extends StatelessWidget {
   final Function(VideoType) onFilterChanged;
   final bool isFocused;
   final VideoRepository videoRepository;
-  final FirebaseService firebaseService;
 
   const ControlPanel({
     super.key,
@@ -19,7 +17,6 @@ class ControlPanel extends StatelessWidget {
     required this.onFilterChanged,
     this.isFocused = false,
     required this.videoRepository,
-    required this.firebaseService,
   });
 
   @override
@@ -141,8 +138,7 @@ class ControlPanel extends StatelessWidget {
   }
 
   void _refreshData() {
-    videoRepository.loadRealVideos();
-    videoRepository.loadAnimeVideos();
+    videoRepository.crawlAndSaveVideos();
   }
 
   void _showAbout(BuildContext context) {
