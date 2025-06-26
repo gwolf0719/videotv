@@ -82,7 +82,7 @@ class _MyHomePageState extends State<MyHomePage> {
       await _videoRepository.initialize();
       
       // 載入本地測試數據
-      final videos = _videoRepository.cachedVideos;
+      final videos = await _videoRepository.getAllVideos();
       
       setState(() {
         _videos = videos;
@@ -188,9 +188,9 @@ class _MyHomePageState extends State<MyHomePage> {
                           vertical: 8,
                         ),
                         child: ListTile(
-                          leading: video.hasThumbnail
+                          leading: video.thumbnailUrl.isNotEmpty
                               ? Image.network(
-                                  video.thumbnailUrl!,
+                                  video.thumbnailUrl,
                                   width: 80,
                                   height: 60,
                                   fit: BoxFit.cover,
@@ -217,10 +217,10 @@ class _MyHomePageState extends State<MyHomePage> {
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (video.metadata?['channel'] != null)
-                                Text('頻道: ${video.metadata!['channel']}'),
-                              if (video.addedAt != null)
-                                Text('日期: ${video.addedAt!.toString().split(' ')[0]}'),
+                              if (video.channel.isNotEmpty)
+                                Text('頻道: ${video.channel}'),
+                              if (video.date.isNotEmpty)
+                                Text('日期: ${video.date}'),
                               Text(
                                 video.isAnime ? '動畫' : '真人',
                                 style: TextStyle(
@@ -233,10 +233,10 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           trailing: IconButton(
                             icon: Icon(
-                              _videoRepository.cachedFavorites.any((fav) => fav.id == video.id)
+                              video.isFavorite
                                   ? Icons.favorite
                                   : Icons.favorite_border,
-                              color: _videoRepository.cachedFavorites.any((fav) => fav.id == video.id) ? Colors.red : null,
+                              color: video.isFavorite ? Colors.red : null,
                             ),
                             onPressed: () {
                               _toggleFavorite(video);

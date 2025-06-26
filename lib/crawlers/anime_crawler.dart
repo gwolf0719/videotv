@@ -39,26 +39,8 @@ class AnimeCrawler {
 
   // 新增：載入現有資料
   Future<void> _loadExistingData() async {
-    try {
-      final snapshot = await dbRef.get();
-      if (snapshot.exists) {
-        final data = snapshot.value;
-        if (data is List) {
-          _allVideos = data
-              .whereType<Map>()
-              .map((e) => e.cast<String, dynamic>())
-              .toList();
-        } else if (data is Map) {
-          _allVideos = data.values
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-        }
-      }
-    } catch (e) {
-      print('載入現有動畫資料失敗: $e');
-      _allVideos = [];
-    }
+    print('⚠️ Firebase 功能已停用，跳過載入雲端資料');
+    _allVideos = [];
   }
 
   // 新增：背景爬取下一頁
